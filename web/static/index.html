@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feed İşleyici</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .container { background: #f5f5f5; padding: 20px; border-radius: 8px; }
+        .form-group { margin-bottom: 15px; }
+        input[type="text"] { width: 100%; padding: 8px; margin-top: 5px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 15px; cursor: pointer; }
+        #result { margin-top: 20px; padding: 10px; border-radius: 4px; white-space: pre-wrap; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Feed İşleyici</h1>
+        <form id="feedForm">
+            <div class="form-group">
+                <label for="feedUrl">Feed URL'si:</label>
+                <input type="text" id="feedUrl" name="feedUrl" required 
+                       value="https://gofull.onrender.com/feed?url=https%3A%2F%2Fwww.dunya.com%2Frss&limit=3">
+            </div>
+            <div class="form-group">
+                <label for="apiKey">API Anahtarı:</label>
+                <input type="text" id="apiKey" name="apiKey" required 
+                       value="oVenTIFidaLe">
+            </div>
+            <button type="submit">İşle</button>
+        </form>
+        <div id="result"></div>
+    </div>
+    <script>
+        document.getElementById('feedForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const url = document.getElementById('feedUrl').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const resultDiv = document.getElementById('result');
+            
+            resultDiv.className = '';
+            resultDiv.textContent = 'İşleniyor...';
+            
+            try {
+                const response = await fetch('/api/v1/admin/process', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        feed_urls: [url],  // API expects 'feed_urls' with an underscore
+                        type: 'turkish'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.className = 'success';
+                    resultDiv.innerHTML = `Başarılı!<br>${JSON.stringify(data, null, 2)}`;
+                } else {
+                    throw new Error(data.error || 'Bilinmeyen hata');
+                }
+            } catch (error) {
+                resultDiv.className = 'error';
+                resultDiv.textContent = `Hata: ${error.message}`;
+                console.error('Hata detayı:', error);
+            }
+        });
+    </script>
+</body>
+</html>

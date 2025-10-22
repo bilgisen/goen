@@ -1,0 +1,95 @@
+# Server Configuration
+server:
+  port: 8080
+  environment: development  # development, staging, production
+  log_level: info  # debug, info, warn, error
+  shutdown_timeout: 30s
+
+# Redis Configuration
+redis:
+  url: "redis://localhost:6379/0"
+  pool_size: 10
+  min_idle_conns: 5
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  pool_timeout: 4s
+
+# AI Configuration
+ai:
+  provider: "gemini"  # gemini, openai, etc.
+  model: "gemini-pro"
+  max_retries: 3
+  timeout: 60s
+  temperature: 0.7
+  max_tokens: 2000
+
+# Feed Processing
+feed:
+  max_concurrent: 5
+  request_timeout: 30s
+  user_agent: "AI-News-Processor/1.0"
+  max_retries: 3
+  retry_delay: 5s
+
+# Storage
+storage:
+  base_path: "./data"
+  max_file_size: "10MB"
+  retention_period: "720h"  # 30 days
+
+# Monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    path: "/metrics"
+  health_check:
+    enabled: true
+    path: "/health"
+
+# Rate Limiting
+rate_limit:
+  enabled: true
+  rps: 10
+  burst: 30
+
+# CORS Configuration
+cors:
+  allowed_origins:
+    - "*"
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allowed_headers:
+    - Accept
+    - Content-Type
+    - Authorization
+  allow_credentials: true
+  max_age: 300
+
+# Security
+security:
+  api_key: ""  # Set in production
+  enable_https: false
+  tls_cert: ""
+  tls_key: ""
+
+# Admin API
+admin:
+  enabled: true
+  path_prefix: "/admin"
+  api_key: ""  # Set in production
+
+# Logging
+logging:
+  level: "info"
+  format: "json"  # json, text
+  file_path: "logs/app.log"
+  max_size: 100  # MB
+  max_backups: 7
+  max_age: 30    # days
+  compress: true
