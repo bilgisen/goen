@@ -81,9 +81,16 @@ func (p *PostProcessor) cleanText(s string) string {
 
 // cleanMarkdown cleans and validates markdown content
 func (p *PostProcessor) cleanMarkdown(content string) string {
-	// Remove any potential XSS
-	re := regexp.MustCompile(`<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>`)
+	// Remove any potential XSS - using a simpler regex that doesn't use negative lookahead
+	re := regexp.MustCompile(`<script[^>]*>[\s\S]*?<\/script>`)
 	content = re.ReplaceAllString(content, "")
+
+	// Also remove other potentially dangerous HTML tags
+	dangerousTags := []string{"<script", "<iframe", "<object", "<embed", "<link", "<meta"}
+	for _, tag := range dangerousTags {
+		re := regexp.MustCompile(fmt.Sprintf(`<%s[^>]*>`, tag))
+		content = re.ReplaceAllString(content, "")
+	}
 
 	// Normalize line endings
 	content = strings.ReplaceAll(content, "\r\n", "\n")

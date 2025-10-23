@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bilgisen/goen/internal/logger"
 	"github.com/bilgisen/goen/internal/models"
 	"github.com/go-resty/resty/v2"
 )
@@ -54,26 +55,64 @@ func NewGeminiClient(apiKey, model string) *GeminiClient {
 
 // GenerateEnglishNews processes a Turkish news item and returns an English version
 func (g *GeminiClient) GenerateEnglishNews(ctx context.Context, item models.FeedItem) (*models.NewsItem, error) {
+	log := logger.Get()
+	log.Info().
+		Str("guid", item.Guid).
+		Str("title", item.TitleTR).
+		Msg("Starting to process news item")
+
+	// Set a timeout context
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	// Build the prompt
 	prompt := buildPrompt(item)
+	log.Debug().
+		Str("guid", item.Guid).
+		Msg("Built prompt for Gemini API")
 
 	// Call the Gemini API
+	startTime := time.Now()
 	response, err := g.callGeminiAPI(ctx, prompt)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("guid", item.Guid).
+			Dur("duration", time.Since(startTime)).
+			Msg("Error calling Gemini API")
 		return nil, fmt.Errorf("error calling Gemini API: %w", err)
 	}
+
+	log.Debug().
+		Str("guid", item.Guid).
+		Dur("duration", time.Since(startTime)).
+		Msg("Successfully got response from Gemini API")
 
 	// Parse the response into a NewsItem
 	newsItem, err := parseGeminiResponse(response, item)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("guid", item.Guid).
+			Msg("Error parsing Gemini response")
 		return nil, fmt.Errorf("error parsing Gemini response: %w", err)
 	}
+
+	log.Info().
+		Str("guid", item.Guid).
+		Str("title", newsItem.SeoTitle).
+		Msg("Successfully processed news item")
 
 	return newsItem, nil
 }
 
 func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string, error) {
+	log := logger.Get()
 	url := fmt.Sprintf("%s/%s:generateContent?key=%s", g.baseURL, g.model, g.apiKey)
+	
+	log.Debug().
+		Str("model", g.model).
+		Msg("Sending request to Gemini API")
 
 	req := geminiRequest{
 		Contents: []geminiContent{{
@@ -83,27 +122,48 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 		}},
 	}
 
-	var resp geminiResponse
-	_, err := g.client.R().
+	log.Debug().
+		Interface("request", req).
+		Msg("Sending Gemini API request")
+
+	resp, err := g.client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(req).
-		SetResult(&resp).
+		SetResult(&geminiResponse{}).
 		Post(url)
+
+	log.Debug().
+		Int("status_code", resp.StatusCode()).
+		Str("status", resp.Status()).
+		Msg("Received Gemini API response")
 
 	if err != nil {
 		return "", fmt.Errorf("API request failed: %w", err)
 	}
 
-	if resp.Error != nil {
-		return "", fmt.Errorf("API error: %s", resp.Error.Message)
+	if resp.StatusCode() >= 400 {
+		var errResp struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(resp.Body(), &errResp); err == nil && errResp.Error.Message != "" {
+			return "", fmt.Errorf("API error: %s", errResp.Error.Message)
+		}
+		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode(), resp.String())
 	}
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+	var result geminiResponse
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return "", fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
 		return "", fmt.Errorf("no content in response")
 	}
 
-	return resp.Candidates[0].Content.Parts[0].Text, nil
+	return result.Candidates[0].Content.Parts[0].Text, nil
 }
 
 func buildPrompt(item models.FeedItem) string {
@@ -143,12 +203,12 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 	var result struct {
 		SeoTitle    string   `json:"seo_title"`
 		SeoDesc     string   `json:"seo_description"`
-		TLDR        []string `json:	"tldr"`
+		TLDR        []string `json:"tldr"`
 		ContentMD   string   `json:"content_md"`
 		Category    string   `json:"category"`
 		Tags        []string `json:"tags"`
 		ImageTitle  string   `json:"image_title"`
-		ImageDesc   string   `json:"image_description"`
+		ImageDesc   string   `json:"image_desc"`
 	}
 
 	// Clean the response (sometimes Gemini adds markdown code blocks)
@@ -174,7 +234,7 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		Tags:        result.Tags,
 		ImageTitle:  result.ImageTitle,
 		ImageDesc:   result.ImageDesc,
-		OriginalUrl: item.Url,
+		OriginalUrl: item.Guid, // Using Guid as the original URL since FeedItem doesn't have Url field
 		CreatedAt:   time.Now(),
 	}, nil
 }

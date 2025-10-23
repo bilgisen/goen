@@ -61,6 +61,11 @@ func (p *Parser) ValidateFeedItem(item models.FeedItem) error {
 
 // ProcessFeedItems concurrently processes a slice of feed items
 func (p *Parser) ProcessFeedItems(ctx context.Context, items []models.FeedItem) ([]models.FeedItem, []error) {
+	log := logger.Get()
+	log.Debug().
+		Int("total_items", len(items)).
+		Msg("Starting to process feed items")
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var validItems []models.FeedItem
@@ -68,9 +73,13 @@ func (p *Parser) ProcessFeedItems(ctx context.Context, items []models.FeedItem) 
 
 	semaphore := make(chan struct{}, 10) // Limit concurrent processing
 
-	for _, item := range items {
+	for i, item := range items {
 		select {
 		case <-ctx.Done():
+			log.Warn().
+				Int("processed_items", i).
+				Int("valid_items", len(validItems)).
+				Msg("Context cancelled while processing feed items")
 			return validItems, append(errors, ctx.Err())
 		case semaphore <- struct{}{}:
 		}
@@ -84,6 +93,12 @@ func (p *Parser) ProcessFeedItems(ctx context.Context, items []models.FeedItem) 
 
 			normalized := p.NormalizeFeedItem(item)
 			if err := p.ValidateFeedItem(normalized); err != nil {
+				log.Debug().
+					Str("guid", item.Guid).
+					Str("title", item.TitleTR).
+					Str("url", item.Url).
+					Err(err).
+					Msg("Validation failed for feed item")
 				mu.Lock()
 				errors = append(errors, fmt.Errorf("invalid feed item %s: %w", item.Guid, err))
 				mu.Unlock()
@@ -93,9 +108,29 @@ func (p *Parser) ProcessFeedItems(ctx context.Context, items []models.FeedItem) 
 			mu.Lock()
 			validItems = append(validItems, normalized)
 			mu.Unlock()
+
+			log.Debug().
+				Str("guid", item.Guid).
+				Str("title", item.TitleTR).
+				Msg("Successfully processed feed item")
 		}()
+
+		// Log progress every 10 items
+		if i > 0 && i%10 == 0 {
+			log.Debug().
+				Int("processed", i).
+				Int("valid_so_far", len(validItems)).
+				Msg("Processing feed items")
+		}
 	}
 
 	wg.Wait()
+
+	log.Info().
+		Int("total_processed", len(items)).
+		Int("valid_items", len(validItems)).
+		Int("validation_errors", len(errors)).
+		Msg("Finished processing feed items")
+
 	return validItems, errors
 }

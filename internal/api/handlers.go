@@ -104,77 +104,141 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 
 // ProcessFeeds handles POST /api/admin/process
 func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
+	log := logger.Get()
+	start := time.Now()
+	
+	log.Info().
+		Str("ip", c.IP()).
+		Str("method", c.Method()).
+		Str("path", c.Path()).
+		Msg("Received process feeds request")
+
 	var req struct {
 		FeedURLs []string `json:"feed_urls"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
+		log.Error().
+			Err(err).
+			Msg("Invalid request body")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid request body",
+			"error": "Invalid request body: " + err.Error(),
 		})
 	}
 
 	if len(req.FeedURLs) == 0 {
+		log.Warn().Msg("No feed URLs provided")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "At least one feed URL is required",
+			"error": "No feed URLs provided",
 		})
 	}
+
+	log.Info().
+		Int("feed_count", len(req.FeedURLs)).
+		Msg("Starting background processing of feeds")
 
 	// Start processing in a goroutine
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 
+		log.Info().
+			Int("feed_count", len(req.FeedURLs)).
+			Dur("timeout", 30*time.Minute).
+			Msg("Starting feed processing in background")
+
 		// Process feeds
 		items, err := h.processor.ProcessFeeds(ctx, req.FeedURLs)
 		if err != nil {
-			logger.Get().Info().Int("url_count", len(req.FeedURLs)).Msg("Starting feed processing")
+			log.Error().
+				Err(err).
+				Int("url_count", len(req.FeedURLs)).
+				Msg("Error processing feeds")
 			return
 		}
 
+		log.Info().
+			Int("items_to_process", len(items)).
+			Dur("fetch_duration", time.Since(start)).
+			Msg("Starting to process feed items with AI")
+
 		// Process each item with AI
-		for _, item := range items {
+		for i, item := range items {
 			select {
 			case <-ctx.Done():
-				logger.Get().Info().Msg("Processing cancelled")
+				log.Warn().
+					Int("processed_items", i).
+					Int("total_items", len(items)).
+					Msg("Processing cancelled due to timeout")
 				return
 			default:
+				// Log progress every 5 items
+				if i > 0 && i%5 == 0 {
+					log.Info().
+						Int("processed", i).
+						Int("remaining", len(items)-i).
+						Dur("elapsed", time.Since(start)).
+						Msg("Processing feed items")
+				}
+
 				// Generate English version using Gemini
 				newsItem, err := h.gemini.GenerateEnglishNews(ctx, item)
 				if err != nil {
-					logger.Get().Error().Err(err).Str("url", item.Url).Msg("Error generating English news")
+					log.Error().
+						Err(err).
+						Str("title", item.TitleTR).
+						Int("item_index", i).
+						Msg("Error generating English news")
 					continue
 				}
 
 				// Post-process the generated content
 				if h.postProc != nil {
 					if err := h.postProc.ProcessNewsItem(newsItem); err != nil {
-						logger.Get().Error().Err(err).Str("id", newsItem.ID).Msg("Error post-processing news item")
+						log.Error().
+							Err(err).
+							Str("id", newsItem.ID).
+							Msg("Error post-processing news item")
 						continue
 					}
 				}
 
-				// Save to storage
+				// Save the processed item
 				if h.storage != nil {
 					if err := h.storage.SaveNews(ctx, newsItem); err != nil {
-						logger.Get().Error().Err(err).Str("id", newsItem.ID).Msg("Error saving news item")
-						continue
+						log.Error().
+							Err(err).
+							Str("id", newsItem.ID).
+							Msg("Error saving news item")
 					}
 				}
 
 				// Mark as processed
 				if h.processor != nil {
-					if err := h.processor.MarkAsProcessed(ctx, []string{item.Url}, h.config.CacheTTL); err != nil {
-						logger.Get().Error().Err(err).Str("url", item.Url).Msg("Error marking item as processed")
+					if err := h.processor.MarkAsProcessed(ctx, []string{item.Guid}, h.config.CacheTTL); err != nil {
+						log.Error().
+							Err(err).
+							Str("guid", item.Guid).
+							Msg("Error marking item as processed")
 					}
 				}
 			}
 		}
+
+		log.Info().
+			Int("total_items_processed", len(items)).
+			Dur("total_duration", time.Since(start)).
+			Msg("Finished processing all feed items")
 	}()
+
+	log.Info().
+		Dur("request_duration", time.Since(start)).
+		Msg("Request processed, background job started")
 
 	return c.JSON(fiber.Map{
 		"status":  "started",
-		"message": "Feed processing started in the background",
+		"message": fmt.Sprintf("Processing %d feed(s) in the background", len(req.FeedURLs)),
+		"feeds":   len(req.FeedURLs),
 	})
 }
 

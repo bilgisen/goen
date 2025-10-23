@@ -25,10 +25,25 @@ func NewFetcher() *Fetcher {
 	}
 }
 
+// JSONFeed represents the structure of the JSON feed from the URL
+type JSONFeed struct {
+	FeedLink     string `json:"feed_link"`
+	FeedTitle    string `json:"feed_title"`
+	Items        []struct {
+		Title       string `json:"title"`
+		Link        string `json:"link"`
+		Guid        string `json:"guid"`
+		Published   string `json:"published"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+		Image       string `json:"image"`
+	} `json:"items"`
+	ItemsReturned int `json:"items_returned"`
+	ItemsSkipped  int `json:"items_skipped"`
+}
+
 // FetchFeed retrieves a feed from the given URL and parses it into FeedItems
 func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem, error) {
-	var items []models.FeedItem
-
 	resp, err := f.client.R().
 		SetContext(ctx).
 		SetHeader("Accept", "application/json").
@@ -42,12 +57,37 @@ func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem,
 		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode(), url)
 	}
 
-	// Try to parse the response as a single item or an array of items
+	// Try to parse as JSON feed structure first
+	var jsonFeed JSONFeed
+	if err := json.Unmarshal(resp.Body(), &jsonFeed); err == nil && len(jsonFeed.Items) > 0 {
+		// Successfully parsed as JSON feed, convert to our model
+		items := make([]models.FeedItem, 0, len(jsonFeed.Items))
+		for _, item := range jsonFeed.Items {
+			// Use link as fallback if guid is empty
+			guid := item.Guid
+			if guid == "" {
+				guid = item.Link
+			}
+
+			items = append(items, models.FeedItem{
+				Guid:      guid,
+				TitleTR:   item.Title,
+				ContentTR: item.Content,
+				Image:     item.Image,
+				Url:       item.Link,
+				Category:  "general", // Default category
+			})
+		}
+		return items, nil
+	}
+
+	// Fallback to the original parsing logic for other formats
+	var items []models.FeedItem
 	if err := json.Unmarshal(resp.Body(), &items); err != nil {
 		// If it's not an array, try to parse as a single item
 		var singleItem models.FeedItem
 		if singleErr := json.Unmarshal(resp.Body(), &singleItem); singleErr != nil {
-			return nil, fmt.Errorf("failed to parse feed response: %w (tried both array and single item)", err)
+			return nil, fmt.Errorf("failed to parse feed response: %w (tried both JSON feed and array formats)", err)
 		}
 		items = []models.FeedItem{singleItem}
 	}

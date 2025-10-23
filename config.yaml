@@ -18,7 +18,7 @@ redis:
 # AI Configuration
 ai:
   provider: "gemini"  # gemini, openai, etc.
-  model: "gemini-pro"
+  model: "gemini-2.5-flash"
   max_retries: 3
   timeout: 60s
   temperature: 0.7
