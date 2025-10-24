@@ -47,7 +47,11 @@ func (s *Storage) SaveNews(ctx context.Context, item *models.NewsItem) error {
 		defer s.mu.Unlock()
 
 		// Create dated directory (YYYY/MM/DD)
-		datePath := filepath.Join(s.basePath, "processed", time.Now().Format("2006/01/02"))
+		datePath := s.basePath
+		if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+			datePath = filepath.Join(s.basePath, "processed")
+		}
+		datePath = filepath.Join(datePath, time.Now().Format("2006/01/02"))
 		if err := os.MkdirAll(datePath, 0755); err != nil {
 			return fmt.Errorf("failed to create date directory: %w", err)
 		}
@@ -84,7 +88,11 @@ func (s *Storage) GetNewsByID(ctx context.Context, id string) (*models.NewsItem,
 		defer s.mu.RUnlock()
 
 		var foundItem *models.NewsItem
-		err := filepath.WalkDir(filepath.Join(s.basePath, "processed"), func(path string, d fs.DirEntry, err error) error {
+		searchPath := s.basePath
+		if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+			searchPath = filepath.Join(s.basePath, "processed")
+		}
+		err := filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -135,7 +143,12 @@ func (s *Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models.N
 		defer s.mu.RUnlock()
 
 		var newsItems []*models.NewsItem
-		processedPath := filepath.Join(s.basePath, "processed")
+		processedPath := s.basePath
+		// If basePath already ends with "processed" or "processed/", use it directly
+		// Otherwise, append "processed" to it
+		if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+			processedPath = filepath.Join(s.basePath, "processed")
+		}
 
 		// Get all JSON files
 		var files []string
