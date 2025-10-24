@@ -15,10 +15,10 @@ import (
 type Processor struct {
 	fetcher *Fetcher
 	parser  *Parser
-	cache   *cache.RedisClient
+	cache   cache.RedisInterface
 }
 
-func NewProcessor(redisClient *cache.RedisClient) *Processor {
+func NewProcessor(redisClient cache.RedisInterface) *Processor {
 	return &Processor{
 		fetcher: NewFetcher(),
 		parser:  NewParser(),

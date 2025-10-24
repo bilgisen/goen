@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bilgisen/goen/internal/logger"
 	"github.com/bilgisen/goen/internal/models"
 )
 

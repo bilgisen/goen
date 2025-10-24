@@ -40,6 +40,7 @@ func (p *PostProcessor) ProcessNewsItem(item *models.NewsItem) error {
 	item.SeoTitle = p.cleanText(item.SeoTitle)
 	item.SeoDesc = p.cleanText(item.SeoDesc)
 	item.ContentMD = p.cleanMarkdown(item.ContentMD)
+	item.Image = strings.TrimSpace(item.Image)
 
 	// Truncate if necessary
 	if len(item.SeoTitle) > p.maxTitleLength {

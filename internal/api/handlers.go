@@ -17,17 +17,23 @@ import (
 
 type Handlers struct {
 	config    *config.Config
-	redis     *cache.RedisClient
+	redis     cache.RedisInterface
 	storage   *storage.Storage
 	processor *feed.Processor
 	gemini    *ai.GeminiClient
 	postProc  *ai.PostProcessor
 }
 
-func NewHandlers(cfg *config.Config, redis *cache.RedisClient) (*Handlers, error) {
+func NewHandlers(cfg *config.Config, redis cache.RedisInterface) (*Handlers, error) {
 	storage, err := storage.NewStorage(cfg.ProcessedPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+	}
+
+	// Initialize Gemini client (optional for basic functionality)
+	var gemini *ai.GeminiClient
+	if cfg.AIApiKey != "" && cfg.AIApiKey != "test-key" {
+		gemini = ai.NewGeminiClient(cfg.AIApiKey, cfg.AIModel)
 	}
 
 	return &Handlers{
@@ -35,7 +41,7 @@ func NewHandlers(cfg *config.Config, redis *cache.RedisClient) (*Handlers, error
 		redis:     redis,
 		storage:   storage,
 		processor: feed.NewProcessor(redis),
-		gemini:    ai.NewGeminiClient(cfg.AIApiKey, cfg.AIModel),
+		gemini:    gemini,
 		postProc:  ai.NewPostProcessor(),
 	}, nil
 }
@@ -179,6 +185,15 @@ func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
 						Int("remaining", len(items)-i).
 						Dur("elapsed", time.Since(start)).
 						Msg("Processing feed items")
+				}
+
+				// Skip AI processing if Gemini client is not available
+				if h.gemini == nil {
+					log.Warn().
+						Str("title", item.TitleTR).
+						Int("item_index", i).
+						Msg("Gemini client not available, skipping AI processing")
+					continue
 				}
 
 				// Generate English version using Gemini

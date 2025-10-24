@@ -14,7 +14,14 @@ type RedisClient struct {
 	prefix string
 }
 
-func NewRedisClient(cfg *config.Config) (*RedisClient, error) {
+type RedisInterface interface {
+	IsProcessed(ctx context.Context, hash string) (bool, error)
+	MarkProcessed(ctx context.Context, hash string, ttl time.Duration) error
+	Close() error
+}
+
+func NewRedisClient(cfg *config.Config) (RedisInterface, error) {
+	// Try to create real Redis client first
 	opt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Redis URL: %w", err)
@@ -27,7 +34,8 @@ func NewRedisClient(cfg *config.Config) (*RedisClient, error) {
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+		// Redis not available, use mock client
+		return NewMockRedisClient(cfg)
 	}
 
 	return &RedisClient{

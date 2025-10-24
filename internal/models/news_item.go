@@ -12,6 +12,7 @@ type NewsItem struct {
 	ContentMD    string    `json:"content_md"`
 	Category     string    `json:"category"`
 	Tags         []string  `json:"tags"`
+	Image        string    `json:"image"`
 	ImageTitle   string    `json:"image_title"`
 	ImageDesc    string    `json:"image_desc"`
 	OriginalUrl  string    `json:"original_url"`

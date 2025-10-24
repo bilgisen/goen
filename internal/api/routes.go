@@ -11,7 +11,7 @@ import (
 )
 
 // SetupRoutes configures all the routes for the application
-func SetupRoutes(app *fiber.App, redisClient *cache.RedisClient, cfg *config.Config) {
+func SetupRoutes(app *fiber.App, redisClient cache.RedisInterface, cfg *config.Config) {
 	// Initialize handlers
 	handlers, err := NewHandlers(cfg, redisClient)
 	if err != nil {

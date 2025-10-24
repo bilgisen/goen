@@ -232,9 +232,10 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		ContentMD:   result.ContentMD,
 		Category:    result.Category,
 		Tags:        result.Tags,
+		Image:       item.Image,
 		ImageTitle:  result.ImageTitle,
 		ImageDesc:   result.ImageDesc,
-		OriginalUrl: item.Guid, // Using Guid as the original URL since FeedItem doesn't have Url field
+		OriginalUrl: item.Url, // Using the actual URL from the feed item
 		CreatedAt:   time.Now(),
 	}, nil
 }
