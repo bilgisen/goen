@@ -34,7 +34,7 @@ func main() {
 
     // Initialize Redis client
     var redisClient cache.RedisInterface
-    redisClient, err = cache.NewRedisClient(cfg)
+    redisClient, err := cache.NewRedisClient(cfg)
     if err != nil {
         log.Fatal().Err(err).Msg("Failed to initialize Redis client")
     }
