@@ -59,11 +59,21 @@ func main() {
 
     // Serve index.html directly
     app.Get("/", func(c *fiber.Ctx) error {
-        return c.SendFile("./web/static/index.html")
+        if err := c.SendFile("./web/static/index.html"); err != nil {
+            // Fallback to a simple health response if static file doesn't exist
+            return c.JSON(fiber.Map{
+                "status": "ok",
+                "service": "ai-news-processor",
+                "message": "API is running - use /api/v1/ endpoints",
+            })
+        }
+        return nil
     })
 
     // Setup API routes
+    log.Info().Msg("Setting up API routes...")
     api.SetupRoutes(app, redisClient, cfg)
+    log.Info().Msg("API routes setup completed")
 
     // Start server in a goroutine
     go func() {

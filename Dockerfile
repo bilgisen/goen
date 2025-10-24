@@ -40,18 +40,21 @@ COPY web ./web
 # Create data directories
 RUN mkdir -p /app/data/feeds /app/data/processed
 
-# Expose application port
+# Expose application port (will be set by PORT env var)
 EXPOSE 8080
 
 # Environment variables
 ENV PORT=8080
-ENV REDIS_URL=redis://redis:6379/0
-ENV FEED_SOURCE_PATH=/app/data/feeds/
+ENV APP_ENV=production
+ENV STORAGE_PATH=/app/data
 ENV PROCESSED_PATH=/app/data/processed/
+ENV FEED_SOURCE_PATH=/app/data/feeds/
+ENV REDIS_URL=redis://localhost:6379/0
+ENV LOG_LEVEL=info
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/api/v1/health || exit 1
 
 # Command to run the application
 CMD ["./ai-news-processor"]
