@@ -17,6 +17,7 @@ type RedisClient struct {
 type RedisInterface interface {
 	IsProcessed(ctx context.Context, hash string) (bool, error)
 	MarkProcessed(ctx context.Context, hash string, ttl time.Duration) error
+	ClearProcessed(ctx context.Context) error
 	Close() error
 }
 

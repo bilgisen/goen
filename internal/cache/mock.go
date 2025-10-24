@@ -2,8 +2,9 @@ package cache
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"github.com/bilgisen/goen/internal/config"
 )
 
 // MockRedisClient provides a mock implementation for testing when Redis is not available

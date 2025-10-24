@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git
@@ -36,9 +36,6 @@ COPY --from=builder /go/bin/ai-news-processor .
 
 # Create data directories
 RUN mkdir -p /app/data/feeds /app/data/processed
-
-# Copy configuration file (optional)
-COPY --from=builder /app/config.example.yaml /app/config.yaml
 
 # Expose application port
 EXPOSE 8080
