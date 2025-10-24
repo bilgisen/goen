@@ -12,7 +12,7 @@ A high-performance news processing service that fetches, processes, and serves n
 
 ## Prerequisites
 
-- Go 1.25.3 or higher
+- Go 1.21 or higher
 - Redis 7.0 or higher
 - Docker (optional, for containerized deployment)
 - Gemini API key
