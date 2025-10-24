@@ -5,14 +5,73 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
+	"github.com/bilgisen/goen/internal/logger"
 	"github.com/bilgisen/goen/internal/models"
 	"github.com/go-resty/resty/v2"
 )
 
 type Fetcher struct {
 	client *resty.Client
+}
+
+// isRenderService checks if the URL is hosted on Render.com
+func isRenderService(feedURL string) bool {
+	parsedURL, err := url.Parse(feedURL)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(parsedURL.Host, "onrender.com")
+}
+
+// wakeUpRenderService sends a simple request to wake up a Render service
+func (f *Fetcher) wakeUpRenderService(ctx context.Context, feedURL string) error {
+	if !isRenderService(feedURL) {
+		return nil // Not a Render service, skip
+	}
+
+	logger.Get().Info().
+		Str("url", feedURL).
+		Msg("Detected Render service, sending wake up ping")
+
+	parsedURL, err := url.Parse(feedURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	// Create a simple ping URL (remove query parameters for ping)
+	pingURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+
+	logger.Get().Debug().
+		Str("ping_url", pingURL).
+		Msg("Sending HEAD request to wake up Render service")
+
+	// Send a quick HEAD request to wake up the service
+	resp, err := f.client.R().
+		SetContext(ctx).
+		SetTimeout(10 * time.Second). // Shorter timeout for ping
+		Head(pingURL)
+
+	if err != nil {
+		return fmt.Errorf("failed to ping Render service %s: %w", pingURL, err)
+	}
+
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		return fmt.Errorf("Render service %s returned status code %d", pingURL, resp.StatusCode())
+	}
+
+	logger.Get().Info().
+		Str("service", pingURL).
+		Int("status_code", resp.StatusCode()).
+		Msg("Successfully woke up Render service")
+
+	// Wait a bit for the service to fully wake up
+	time.Sleep(2 * time.Second)
+
+	return nil
 }
 
 func NewFetcher() *Fetcher {
@@ -44,6 +103,16 @@ type JSONFeed struct {
 
 // FetchFeed retrieves a feed from the given URL and parses it into FeedItems
 func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem, error) {
+	// First, wake up Render services if needed
+	if err := f.wakeUpRenderService(ctx, url); err != nil {
+		// Log the error but don't fail the entire operation
+		// The main fetch might still work even if ping fails
+		logger.Get().Warn().
+			Err(err).
+			Str("url", url).
+			Msg("Failed to wake up Render service, continuing with fetch")
+	}
+
 	resp, err := f.client.R().
 		SetContext(ctx).
 		SetHeader("Accept", "application/json").

@@ -5,13 +5,20 @@ import (
 
 	"github.com/bilgisen/goen/internal/cache"
 	"github.com/bilgisen/goen/internal/config"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/bilgisen/goen/internal/logger"
+	fiberLogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2"
 )
 
 // SetupRoutes configures all the routes for the application
 func SetupRoutes(app *fiber.App, redisClient cache.RedisInterface, cfg *config.Config) {
+	logger.Get().Info().
+		Str("r2_endpoint", cfg.R2Endpoint).
+		Str("r2_bucket", cfg.R2Bucket).
+		Bool("r2_credentials_valid", cfg.R2Endpoint != "" && cfg.R2AccessKey != "" && cfg.R2SecretKey != "").
+		Msg("R2 configuration loaded")
+
 	// Initialize handlers
 	handlers, err := NewHandlers(cfg, redisClient)
 	if err != nil {
@@ -20,7 +27,7 @@ func SetupRoutes(app *fiber.App, redisClient cache.RedisInterface, cfg *config.C
 
 	// Middleware
 	app.Use(recover.New())
-	app.Use(logger.New(logger.Config{
+	app.Use(fiberLogger.New(fiberLogger.Config{
 		Format: "${time} ${method} ${path} - ${status} - ${latency}\n",
 	}))
 

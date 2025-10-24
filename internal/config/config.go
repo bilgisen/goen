@@ -24,6 +24,13 @@ type Config struct {
 	CacheTTL       time.Duration `json:"cache_ttl"`
 	MaxConcurrency int    `json:"max_concurrency"`
 
+	// CloudFlare R2 Configuration
+	R2Endpoint      string `json:"r2_endpoint"`
+	R2AccessKey     string `json:"r2_access_key"`
+	R2SecretKey     string `json:"r2_secret_key"`
+	R2Bucket        string `json:"r2_bucket"`
+	R2AccountID     string `json:"r2_account_id"`
+
 	// AI Configuration
 	AIApiKey    string `json:"ai_api_key"`
 	AIModel     string `json:"ai_model"`
@@ -34,8 +41,8 @@ type Config struct {
 	StoragePath    string `json:"storage_path"`
 	FeedSourcePath string `json:"feed_source_path"`
 	ProcessedPath  string `json:"processed_path"`
-	MaxFileSize    int64  `json:"max_file_size"`
 	RetentionDays  int    `json:"retention_days"`
+	MaxFileSize    int64  `json:"max_file_size"`
 
 	// Logging
 	LogLevel string `json:"log_level"`
@@ -77,6 +84,13 @@ func Load() *Config {
 		ProcessedPath:  getEnv("PROCESSED_PATH", "./data/processed/"),
 		MaxFileSize:    getEnvAsInt64("MAX_FILE_SIZE", 10<<20), // 10MB
 		RetentionDays:  getEnvAsInt("RETENTION_DAYS", 30),
+
+		// CloudFlare R2 Configuration
+		R2Endpoint:  getEnv("R2_ENDPOINT", ""),
+		R2AccessKey: getEnv("R2_ACCESS_KEY", ""),
+		R2SecretKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2Bucket:    getEnv("R2_BUCKET", "newsapi"),
+		R2AccountID: getEnv("CLOUDFLARE_ACCOUNT_ID", ""),
 
 		// Logging
 		LogLevel: getEnv("LOG_LEVEL", "info"),

@@ -15,11 +15,6 @@ import (
 	"github.com/bilgisen/goen/internal/models"
 )
 
-type Storage struct {
-	basePath string
-	mu      sync.RWMutex
-}
-
 func NewStorage(basePath string) (*Storage, error) {
 	// Create base directory if it doesn't exist
 	if err := os.MkdirAll(basePath, 0755); err != nil {
@@ -35,6 +30,11 @@ func NewStorage(basePath string) (*Storage, error) {
 	return &Storage{
 		basePath: basePath,
 	}, nil
+}
+
+type Storage struct {
+	basePath string
+	mu      sync.RWMutex
 }
 
 // SaveNews saves a news item to disk
