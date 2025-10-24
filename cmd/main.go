@@ -57,10 +57,7 @@ func main() {
     app.Use(recover.New()) // Recover from panics
     app.Use(middleware.RequestLogger())
 
-    // Serve static files from web/static directory
-    app.Static("/", "./web/static")
-
-    // Root endpoint
+    // Serve index.html directly
     app.Get("/", func(c *fiber.Ctx) error {
         return c.SendFile("./web/static/index.html")
     })

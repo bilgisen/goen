@@ -110,6 +110,16 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 
 // ProcessFeeds handles POST /api/admin/process
 func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
+	// Check API key for admin endpoints
+	if h.config.AdminAPIKey != "" {
+		apiKey := c.Get("X-API-Key")
+		if apiKey != h.config.AdminAPIKey {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid API key",
+			})
+		}
+	}
+
 	log := logger.Get()
 	start := time.Now()
 	
@@ -259,6 +269,16 @@ func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
 
 // DeleteNews handles DELETE /api/admin/news/:id
 func (h *Handlers) DeleteNews(c *fiber.Ctx) error {
+	// Check API key for admin endpoints
+	if h.config.AdminAPIKey != "" {
+		apiKey := c.Get("X-API-Key")
+		if apiKey != h.config.AdminAPIKey {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid API key",
+			})
+		}
+	}
+
 	id := c.Params("id")
 	if id == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

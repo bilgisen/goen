@@ -34,6 +34,9 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /go/bin/ai-news-processor .
 
+# Copy web static files
+COPY web ./web
+
 # Create data directories
 RUN mkdir -p /app/data/feeds /app/data/processed
 
