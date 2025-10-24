@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git
@@ -16,40 +16,40 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the application (static binary)
 RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/ai-news-processor ./cmd/
 
 # Final stage
 FROM alpine:3.18
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata wget
 
 # Set timezone
 ENV TZ=Europe/Istanbul
 
-# Create app directory
+# Set working directory
 WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /go/bin/ai-news-processor .
 
-# Create data directory
+# Create data directories
 RUN mkdir -p /app/data/feeds /app/data/processed
 
-# Copy configuration
+# Copy configuration file (optional)
 COPY --from=builder /app/config.example.yaml /app/config.yaml
 
-# Expose port
+# Expose application port
 EXPOSE 8080
 
-# Set environment variables
+# Environment variables
 ENV PORT=8080
 ENV REDIS_URL=redis://redis:6379/0
 ENV FEED_SOURCE_PATH=/app/data/feeds/
 ENV PROCESSED_PATH=/app/data/processed/
 
-# Set health check
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
 
