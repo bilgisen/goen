@@ -1,17 +1,14 @@
 package config
 
 import (
-	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
-// Config holds all configuration for the application
 // Config holds all configuration for the application
 type Config struct {
 	// Server configuration

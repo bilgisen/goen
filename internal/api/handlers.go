@@ -2,10 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/bilgisen/goen/internal/ai"
@@ -13,13 +11,8 @@ import (
 	"github.com/bilgisen/goen/internal/config"
 	"github.com/bilgisen/goen/internal/feed"
 	"github.com/bilgisen/goen/internal/logger"
-	"github.com/bilgisen/goen/internal/models"
 	"github.com/bilgisen/goen/internal/storage"
 	"github.com/gofiber/fiber/v2"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 )
 
 // min returns the minimum of two integers
@@ -41,7 +34,7 @@ type Handlers struct {
 
 func NewHandlers(cfg *config.Config, redis cache.RedisInterface) (*Handlers, error) {
 	// Initialize storage based on configuration
-	var storage storage.Storage
+	var storageImpl storage.Storage
 	var err error
 
 	// Use R2 storage if R2 credentials are configured
@@ -50,7 +43,7 @@ func NewHandlers(cfg *config.Config, redis cache.RedisInterface) (*Handlers, err
 			Str("r2_endpoint", cfg.R2Endpoint).
 			Str("r2_bucket", cfg.R2Bucket).
 			Msg("R2 credentials found, initializing R2 storage")
-		storage, err = storage.NewR2Storage(cfg.R2Endpoint, cfg.R2AccessKey, cfg.R2SecretKey, cfg.R2Bucket, cfg.R2AccountID)
+		storageImpl, err = storage.NewR2Storage(cfg.R2Endpoint, cfg.R2AccessKey, cfg.R2SecretKey, cfg.R2Bucket, cfg.R2AccountID)
 		if err != nil {
 			logger.Get().Error().
 				Err(err).
@@ -62,26 +55,29 @@ func NewHandlers(cfg *config.Config, redis cache.RedisInterface) (*Handlers, err
 		logger.Get().Info().
 			Str("storage_path", cfg.ProcessedPath).
 			Msg("R2 credentials not found, using file storage")
-		storage, err = storage.NewFileStorage(cfg.ProcessedPath)
+		storageImpl, err = storage.NewFileStorage(cfg.ProcessedPath)
 		if err != nil {
 			logger.Get().Error().
 				Err(err).
 				Msg("Failed to initialize file storage")
 			return nil, fmt.Errorf("failed to initialize file storage: %w", err)
 		}
+	}
+
 	// Initialize Gemini client (optional for basic functionality)
 	var gemini *ai.GeminiClient
 	if cfg.AIApiKey != "" && cfg.AIApiKey != "test-key" {
 		gemini = ai.NewGeminiClient(cfg.AIApiKey, cfg.AIModel)
 	}
-		return &Handlers{
-			config:    cfg,
-			redis:     redis,
-			storage:   storage,
-			processor: feed.NewProcessor(redis),
-			gemini:    gemini,
-			postProc:  ai.NewPostProcessor(),
-		}, nil
+
+	return &Handlers{
+		config:    cfg,
+		redis:     redis,
+		storage:   storageImpl,
+		processor: feed.NewProcessor(redis),
+		gemini:    gemini,
+		postProc:  ai.NewPostProcessor(),
+	}, nil
 }
 
 // HealthCheck handles the /health endpoint
@@ -110,7 +106,7 @@ func (h *Handlers) GetNews(c *fiber.Ctx) error {
 	}
 
 	// Get news from storage
-	news, err := h.storage.ListNews(c.Context(), page, pageSize)
+	news, err := h.storage.ListNews(page, pageSize)
 	if err != nil {
 		logger.Get().Error().Err(err).Msg("Error getting news")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -135,7 +131,7 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 		})
 	}
 
-	news, err := h.storage.GetNewsByID(c.Context(), id)
+	news, err := h.storage.GetNewsByID(id)
 	if err != nil {
 		logger.Get().Error().Err(err).Str("id", id).Msg("Error getting news item")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -269,7 +265,7 @@ func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
 
 				// Save the processed item to primary storage (R2 or file)
 				if h.storage != nil {
-					if err := h.storage.SaveNews(ctx, newsItem); err != nil {
+					if err := h.storage.SaveNews(newsItem); err != nil {
 						log.Error().
 							Err(err).
 							Str("id", newsItem.ID).
@@ -329,7 +325,7 @@ func (h *Handlers) DeleteNews(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.storage.DeleteNews(c.Context(), id); err != nil {
+	if err := h.storage.DeleteNews(id); err != nil {
 		logger.Get().Error().Err(err).Str("id", id).Msg("Error getting news item")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to get news item",

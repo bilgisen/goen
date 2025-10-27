@@ -16,8 +16,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 )
+
+// Storage defines the interface for news item persistence
+type Storage interface {
+	SaveNews(item *models.NewsItem) error
+	GetNewsByID(id string) (*models.NewsItem, error)
+	ListNews(page, pageSize int) ([]*models.NewsItem, error)
+	DeleteNews(id string) error
+	Close() error
+}
 
 // FileStorage implements Storage interface using local filesystem
 type FileStorage struct {
@@ -49,195 +59,179 @@ func NewStorage(basePath string) (*FileStorage, error) {
 }
 
 // SaveNews saves a news item to disk
-func (s *FileStorage) SaveNews(ctx context.Context, item *models.NewsItem) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		s.mu.Lock()
-		defer s.mu.Unlock()
+func (s *FileStorage) SaveNews(item *models.NewsItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-		// Create dated directory (YYYY/MM/DD)
-		datePath := s.basePath
-		if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
-			datePath = filepath.Join(s.basePath, "processed")
-		}
-		datePath = filepath.Join(datePath, time.Now().Format("2006/01/02"))
-		if err := os.MkdirAll(datePath, 0755); err != nil {
-			return fmt.Errorf("failed to create date directory: %w", err)
-		}
-
-		// Create filename with timestamp and ID
-		filename := fmt.Sprintf("%d_%s.json", time.Now().Unix(), item.ID)
-		filePath := filepath.Join(datePath, filename)
-
-		// Marshal to JSON
-		data, err := json.MarshalIndent(item, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal news item: %w", err)
-		}
-
-		// Write to file
-		if err := os.WriteFile(filePath, data, 0644); err != nil {
-			return fmt.Errorf("failed to write news file: %w", err)
-		}
-
-		// Update the item's file path
-		item.FilePath = filePath
-
-		return nil
+	// Create dated directory (YYYY/MM/DD)
+	datePath := s.basePath
+	if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+		datePath = filepath.Join(s.basePath, "processed")
 	}
+	datePath = filepath.Join(datePath, time.Now().Format("2006/01/02"))
+	if err := os.MkdirAll(datePath, 0755); err != nil {
+		return fmt.Errorf("failed to create date directory: %w", err)
+	}
+
+	// Create filename with timestamp and ID
+	filename := fmt.Sprintf("%d_%s.json", time.Now().Unix(), item.ID)
+	filePath := filepath.Join(datePath, filename)
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(item, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal news item: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write news file: %w", err)
+	}
+
+	// Update the item's file path
+	item.FilePath = filePath
+
+	return nil
 }
 
 // GetNewsByID retrieves a news item by its ID
-func (s *FileStorage) GetNewsByID(ctx context.Context, id string) (*models.NewsItem, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		s.mu.RLock()
-		defer s.mu.RUnlock()
+func (s *FileStorage) GetNewsByID(id string) (*models.NewsItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-		var foundItem *models.NewsItem
-		searchPath := s.basePath
-		if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
-			searchPath = filepath.Join(s.basePath, "processed")
-		}
-		err := filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-
-			if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
-				return nil
-			}
-
-			// Check if this is the file we're looking for
-			if strings.Contains(d.Name(), id) {
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return fmt.Errorf("failed to read file %s: %w", path, err)
-				}
-
-				var item models.NewsItem
-				if err := json.Unmarshal(data, &item); err != nil {
-					return fmt.Errorf("failed to unmarshal news item: %w", err)
-				}
-
-				foundItem = &item
-				foundItem.FilePath = path
-				return filepath.SkipDir
-			}
-
-			return nil
-		})
-
-		if err != nil {
-			return nil, fmt.Errorf("error walking the path: %w", err)
-		}
-
-		if foundItem == nil {
-			return nil, fmt.Errorf("news item with ID %s not found", id)
-		}
-
-		return foundItem, nil
+	var foundItem *models.NewsItem
+	searchPath := s.basePath
+	if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+		searchPath = filepath.Join(s.basePath, "processed")
 	}
-}
-
-// ListNews retrieves a paginated list of news items
-func (s *FileStorage) ListNews(ctx context.Context, page, pageSize int) ([]*models.NewsItem, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-
-		var newsItems []*models.NewsItem
-		processedPath := s.basePath
-		// If basePath already ends with "processed" or "processed/", use it directly
-		// Otherwise, append "processed" to it
-		if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
-			processedPath = filepath.Join(s.basePath, "processed")
-		}
-
-		// Get all JSON files
-		var files []string
-		err := filepath.Walk(processedPath, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
-				files = append(files, path)
-			}
-			return nil
-		})
-
-		if err != nil {
-			return nil, fmt.Errorf("error walking the path: %w", err)
-		}
-
-		// Sort by modification time (newest first)
-		sort.Slice(files, func(i, j int) bool {
-			info1, _ := os.Stat(files[i])
-			info2, _ := os.Stat(files[j])
-			return info1.ModTime().After(info2.ModTime())
-		})
-
-		// Apply pagination
-		start := (page - 1) * pageSize
-		if start >= len(files) {
-			return []*models.NewsItem{}, nil
-		}
-
-		end := start + pageSize
-		if end > len(files) {
-			end = len(files)
-		}
-
-		// Read and unmarshal the files
-		for _, file := range files[start:end] {
-			data, err := os.ReadFile(file)
-			if err != nil {
-				return nil, fmt.Errorf("error reading file %s: %w", file, err)
-			}
-
-			var item models.NewsItem
-			if err := json.Unmarshal(data, &item); err != nil {
-				return nil, fmt.Errorf("error unmarshaling news item: %w", err)
-			}
-
-			item.FilePath = file
-			newsItems = append(newsItems, &item)
-		}
-
-		return newsItems, nil
-	}
-}
-
-// DeleteNews deletes a news item by its ID
-func (s *FileStorage) DeleteNews(ctx context.Context, id string) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		item, err := s.GetNewsByID(ctx, id)
+	err := filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if err := os.Remove(item.FilePath); err != nil {
-			return fmt.Errorf("failed to delete news file: %w", err)
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
+			return nil
+		}
+
+		// Check if this is the file we're looking for
+		if strings.Contains(d.Name(), id) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("failed to read file %s: %w", path, err)
+			}
+
+			var item models.NewsItem
+			if err := json.Unmarshal(data, &item); err != nil {
+				return fmt.Errorf("failed to unmarshal news item: %w", err)
+			}
+
+			foundItem = &item
+			foundItem.FilePath = path
+			return filepath.SkipDir
 		}
 
 		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error walking the path: %w", err)
 	}
+
+	if foundItem == nil {
+		return nil, fmt.Errorf("news item with ID %s not found", id)
+	}
+
+	return foundItem, nil
 }
 
-// R2Storage implements Storage interface using Cloudflare R2
+// ListNews retrieves a paginated list of news items
+func (s *FileStorage) ListNews(page, pageSize int) ([]*models.NewsItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var newsItems []*models.NewsItem
+	processedPath := s.basePath
+	// If basePath already ends with "processed" or "processed/", use it directly
+	// Otherwise, append "processed" to it
+	if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+		processedPath = filepath.Join(s.basePath, "processed")
+	}
+
+	// Get all JSON files
+	var files []string
+	err := filepath.Walk(processedPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
+			files = append(files, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error walking the path: %w", err)
+	}
+
+	// Sort by modification time (newest first)
+	sort.Slice(files, func(i, j int) bool {
+		info1, _ := os.Stat(files[i])
+		info2, _ := os.Stat(files[j])
+		return info1.ModTime().After(info2.ModTime())
+	})
+
+	// Apply pagination
+	start := (page - 1) * pageSize
+	if start >= len(files) {
+		return []*models.NewsItem{}, nil
+	}
+
+	end := start + pageSize
+	if end > len(files) {
+		end = len(files)
+	}
+
+	// Read and unmarshal the files
+	for _, file := range files[start:end] {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("error reading file %s: %w", file, err)
+		}
+
+		var item models.NewsItem
+		if err := json.Unmarshal(data, &item); err != nil {
+			return nil, fmt.Errorf("error unmarshaling news item: %w", err)
+		}
+
+		item.FilePath = file
+		newsItems = append(newsItems, &item)
+	}
+
+	return newsItems, nil
+}
+
+// DeleteNews deletes a news item by its ID
+func (s *FileStorage) DeleteNews(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, err := s.GetNewsByID(id)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Remove(item.FilePath); err != nil {
+		return fmt.Errorf("failed to delete news file: %w", err)
+	}
+
+	return nil
+}
+
+// Close closes the file storage (no-op for filesystem storage)
+func (s *FileStorage) Close() error {
+	// Filesystem operations don't require explicit cleanup
+	return nil
+}
 type R2Storage struct {
 	s3Client *s3.Client
 	bucket   string
@@ -262,8 +256,15 @@ func NewR2Storage(endpoint, accessKey, secretKey, bucket, accountID string) (*R2
 		return nil, fmt.Errorf("failed to load R2 config: %w", err)
 	}
 
-// SaveNews saves a news item to R2
-func (r *R2Storage) SaveNews(ctx context.Context, item *models.NewsItem) error {
+	// Create S3 client for R2
+	s3Client := s3.NewFromConfig(customCfg)
+
+	return &R2Storage{
+		s3Client: s3Client,
+		bucket:   bucket,
+	}, nil
+}
+func (r *R2Storage) SaveNews(item *models.NewsItem) error {
 	// Marshal news item to JSON
 	jsonData, err := json.MarshalIndent(item, "", "  ")
 	if err != nil {
@@ -273,7 +274,7 @@ func (r *R2Storage) SaveNews(ctx context.Context, item *models.NewsItem) error {
 	// Upload to R2 with dated path structure
 	key := fmt.Sprintf("processed/%s/%s.json", time.Now().Format("2006/01/02"), item.ID)
 
-	_, err = r.s3Client.PutObject(ctx, &s3.PutObjectInput{
+	_, err = r.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      aws.String(r.bucket),
 		Key:         aws.String(key),
 		Body:        strings.NewReader(string(jsonData)),
@@ -287,10 +288,11 @@ func (r *R2Storage) SaveNews(ctx context.Context, item *models.NewsItem) error {
 	// Update the item's file path for compatibility
 	item.FilePath = key
 
-// GetNewsByID retrieves a news item by its ID from R2
-func (r *R2Storage) GetNewsByID(ctx context.Context, id string) (*models.NewsItem, error) {
+	return nil
+}
+func (r *R2Storage) GetNewsByID(id string) (*models.NewsItem, error) {
 	// Try to find the item in R2 by listing objects with the ID
-	listResult, err := r.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	listResult, err := r.s3Client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 		Bucket: aws.String(r.bucket),
 		Prefix: aws.String("processed/"),
 	})
@@ -313,7 +315,7 @@ func (r *R2Storage) GetNewsByID(ctx context.Context, id string) (*models.NewsIte
 	}
 
 	// Get the object from R2
-	getResult, err := r.s3Client.GetObject(ctx, &s3.GetObjectInput{
+	getResult, err := r.s3Client.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(foundKey),
 	})
@@ -332,10 +334,11 @@ func (r *R2Storage) GetNewsByID(ctx context.Context, id string) (*models.NewsIte
 	// Update the item's file path for compatibility
 	item.FilePath = foundKey
 
-// ListNews retrieves a paginated list of news items from R2
-func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models.NewsItem, error) {
+	return &item, nil
+}
+func (r *R2Storage) ListNews(page, pageSize int) ([]*models.NewsItem, error) {
 	// List all objects in processed/ directory
-	listResult, err := r.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	listResult, err := r.s3Client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 		Bucket: aws.String(r.bucket),
 		Prefix: aws.String("processed/"),
 	})
@@ -345,10 +348,10 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
 	}
 
 	// Filter only JSON files and sort by last modified (newest first)
-	var jsonObjects []s3.Object
+	var jsonObjects []types.Object
 	for _, obj := range listResult.Contents {
 		if strings.HasSuffix(*obj.Key, ".json") {
-			jsonObjects = append(jsonObjects, *obj)
+			jsonObjects = append(jsonObjects, obj)
 		}
 	}
 
@@ -372,9 +375,9 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
 
 	// Fetch and unmarshal each news item
 	for _, obj := range jsonObjects[start:end] {
-		getResult, err := r.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		getResult, err := r.s3Client.GetObject(context.TODO(), &s3.GetObjectInput{
 			Bucket: aws.String(r.bucket),
-			Key:    obj.Key,
+			Key:    aws.String(*obj.Key),
 		})
 
 		if err != nil {
@@ -393,16 +396,17 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
 		newsItems = append(newsItems, &item)
 	}
 
-// DeleteNews deletes a news item by its ID from R2
-func (r *R2Storage) DeleteNews(ctx context.Context, id string) error {
+	return newsItems, nil
+}
+func (r *R2Storage) DeleteNews(id string) error {
 	// Find the item first to get the key
-	item, err := r.GetNewsByID(ctx, id)
+	item, err := r.GetNewsByID(id)
 	if err != nil {
 		return err
 	}
 
 	// Delete the object from R2
-	_, err = r.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = r.s3Client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(item.FilePath),
 	})

@@ -31,7 +31,8 @@ func (p *Parser) CleanHTML(input string) string {
 	cleaned = html.UnescapeString(cleaned)
 	// Normalize whitespace
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
-// extractCategory intelligently determines the category from URL, title, and content
+	return strings.TrimSpace(cleaned)
+}
 func (p *Parser) extractCategory(url, title, content string) string {
 	// Category keywords mapping
 	categoryKeywords := map[string][]string{

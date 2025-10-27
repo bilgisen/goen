@@ -52,7 +52,7 @@ func (f *Fetcher) wakeUpRenderService(ctx context.Context, feedURL string) error
 	// Send a quick HEAD request to wake up the service
 	resp, err := f.client.R().
 		SetContext(ctx).
-		SetTimeout(10 * time.Second). // Shorter timeout for ping
+		SetHeader("Accept", "application/json").
 		Head(pingURL)
 
 	if err != nil {
