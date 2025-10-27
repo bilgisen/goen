@@ -36,26 +36,22 @@ func (p *PostProcessor) ProcessNewsItem(item *models.NewsItem) error {
 		return fmt.Errorf("content too short, minimum %d characters required", p.minContentLength)
 	}
 
-	// Clean and trim fields
+	// Clean and trim fields (no truncation for title and description as requested)
 	item.SeoTitle = p.cleanText(item.SeoTitle)
 	item.SeoDesc = p.cleanText(item.SeoDesc)
 	item.ContentMD = p.cleanMarkdown(item.ContentMD)
 	item.Image = strings.TrimSpace(item.Image)
 
-	// Truncate if necessary
-	if len(item.SeoTitle) > p.maxTitleLength {
-		item.SeoTitle = item.SeoTitle[:p.maxTitleLength-3] + "..."
-	}
-	if len(item.SeoDesc) > p.maxDescriptionLength {
-		item.SeoDesc = item.SeoDesc[:p.maxDescriptionLength-3] + "..."
+	// Clean tags if they exist
+	if len(item.Tags) > 0 {
+		for i, tag := range item.Tags {
+			item.Tags[i] = strings.ToLower(p.cleanText(tag))
+		}
 	}
 
 	// Ensure required fields have values
 	if item.Category == "" {
 		item.Category = "General"
-	}
-	if len(item.Tags) == 0 {
-		item.Tags = []string{"news", item.Category}
 	}
 
 	// Set timestamps

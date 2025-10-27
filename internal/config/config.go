@@ -1,12 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
 )
 
 // Config holds all configuration for the application
@@ -52,111 +54,129 @@ type Config struct {
 	AdminAPIKey string `json:"admin_api_key"`
 }
 
-// Load loads configuration from environment variables and validates it
+// Load loads configuration from config.yaml and environment variables
+// Environment variables take priority over config.yaml
 func Load() *Config {
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		log.Printf("Warning: Error loading .env file: %v", err)
 	}
 
+	// Set up Viper to read config.yaml
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+
+	// Try to read config.yaml
+	if err := viper.ReadInConfig(); err != nil {
+		log.Printf("Warning: Could not read config.yaml: %v", err)
+	}
+
+	// Set environment variable prefix (optional)
+	viper.SetEnvPrefix("")
+	viper.AutomaticEnv() // Read environment variables
+
 	cfg := &Config{
 		// Server configuration
-		Port:            getEnv("PORT", "8080"),
-		Env:             getEnv("APP_ENV", "development"),
-		ShutdownTimeout: getEnvAsDuration("SHUTDOWN_TIMEOUT", 10*time.Second),
-		HTTPTimeout:     getEnvAsDuration("HTTP_TIMEOUT", 30*time.Second),
+		Port:            viper.GetString("PORT"),
+		Env:             viper.GetString("APP_ENV"),
+		ShutdownTimeout: viper.GetDuration("SHUTDOWN_TIMEOUT") * time.Second,
+		HTTPTimeout:     viper.GetDuration("HTTP_TIMEOUT") * time.Second,
 
 		// Redis configuration
-		RedisURL:       getEnv("REDIS_URL", "redis://localhost:6379/0"),
-		RedisPrefix:    getEnv("REDIS_PREFIX", "ai-news:"),
-		CacheTTL:       getEnvAsDuration("CACHE_TTL", 720*time.Hour), // 30 days
-		MaxConcurrency: getEnvAsInt("MAX_CONCURRENCY", 5),
+		RedisURL:       viper.GetString("REDIS_URL"),
+		RedisPrefix:    viper.GetString("REDIS_PREFIX"),
+		CacheTTL:       viper.GetDuration("CACHE_TTL"),
+		MaxConcurrency: viper.GetInt("MAX_CONCURRENCY"),
 
 		// AI Configuration
-		AIApiKey:    getEnv("AI_API_KEY", ""),
-		AIModel:     getEnv("AI_MODEL", "gemini-pro"),
-		AITimeout:   getEnvAsInt("AI_TIMEOUT", 60),
-		AIMaxTokens: getEnvAsInt("AI_MAX_TOKENS", 2000),
+		AIApiKey:    viper.GetString("AI_API_KEY"),
+		AIModel:     viper.GetString("AI_MODEL"),
+		AITimeout:   viper.GetInt("AI_TIMEOUT"),
+		AIMaxTokens: viper.GetInt("AI_MAX_TOKENS"),
 
 		// Storage
-		StoragePath:    getEnv("STORAGE_PATH", "./data"),
-		FeedSourcePath: getEnv("FEED_SOURCE_PATH", "./data/feeds/"),
-		ProcessedPath:  getEnv("PROCESSED_PATH", "./data/processed/"),
-		MaxFileSize:    getEnvAsInt64("MAX_FILE_SIZE", 10<<20), // 10MB
-		RetentionDays:  getEnvAsInt("RETENTION_DAYS", 30),
+		StoragePath:    viper.GetString("STORAGE_PATH"),
+		FeedSourcePath: viper.GetString("FEED_SOURCE_PATH"),
+		ProcessedPath:  viper.GetString("PROCESSED_PATH"),
+		RetentionDays:  viper.GetInt("RETENTION_DAYS"),
+		MaxFileSize:    viper.GetInt64("MAX_FILE_SIZE"),
 
 		// CloudFlare R2 Configuration
-		R2Endpoint:  getEnv("R2_ENDPOINT", ""),
-		R2AccessKey: getEnv("R2_ACCESS_KEY", ""),
-		R2SecretKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
-		R2Bucket:    getEnv("R2_BUCKET", "newsapi"),
-		R2AccountID: getEnv("CLOUDFLARE_ACCOUNT_ID", ""),
+		R2Endpoint:  viper.GetString("R2_ENDPOINT"),
+		R2AccessKey: viper.GetString("R2_ACCESS_KEY"),
+		R2SecretKey: viper.GetString("R2_SECRET_ACCESS_KEY"),
+		R2Bucket:    viper.GetString("R2_BUCKET"),
+		R2AccountID: viper.GetString("CLOUDFLARE_ACCOUNT_ID"),
 
 		// Logging
-		LogLevel: getEnv("LOG_LEVEL", "info"),
-		LogFile:  getEnv("LOG_FILE", ""),
+		LogLevel: viper.GetString("LOG_LEVEL"),
+		LogFile:  viper.GetString("LOG_FILE"),
 
 		// Security
-		AdminAPIKey: getEnv("ADMIN_API_KEY", ""),
+		AdminAPIKey: viper.GetString("ADMIN_API_KEY"),
 	}
 
-	// Validate configuration
-	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Invalid configuration: %v", err)
-	}
+	// Apply defaults if values are empty
+	applyDefaults(cfg)
 
 	return cfg
+}
+
+// applyDefaults sets default values if configuration values are empty
+func applyDefaults(cfg *Config) {
+	if cfg.Port == "" {
+		cfg.Port = "8080"
+	}
+	if cfg.Env == "" {
+		cfg.Env = "development"
+	}
+	if cfg.ShutdownTimeout == 0 {
+		cfg.ShutdownTimeout = 10 * time.Second
+	}
+	if cfg.HTTPTimeout == 0 {
+		cfg.HTTPTimeout = 30 * time.Second
+	}
+	if cfg.RedisURL == "" {
+		cfg.RedisURL = "redis://localhost:6379/0"
+	}
+	if cfg.RedisPrefix == "" {
+		cfg.RedisPrefix = "ai-news:"
+	}
+	if cfg.CacheTTL == 0 {
+		cfg.CacheTTL = 720 * time.Hour // 30 days
+	}
+	if cfg.MaxConcurrency == 0 {
+		cfg.MaxConcurrency = 5
+	}
+	if cfg.AIModel == "" {
+		cfg.AIModel = "gemini-pro"
+	}
+	if cfg.AITimeout == 0 {
+		cfg.AITimeout = 60
+	}
+	if cfg.AIMaxTokens == 0 {
+		cfg.AIMaxTokens = 2000
+	}
+	if cfg.StoragePath == "" {
+		cfg.StoragePath = "./data"
+	}
+	if cfg.FeedSourcePath == "" {
+		cfg.FeedSourcePath = "./data/feeds/"
+	}
+	if cfg.ProcessedPath == "" {
+		cfg.ProcessedPath = "./data/processed/"
+	}
+	if cfg.R2Bucket == "" {
+		cfg.R2Bucket = "newsapi"
+	}
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
+	}
 }
 
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	// Add validation logic here
 	return nil
-}
-
-// Helper functions for environment variable handling
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvAsInt(name string, defaultVal int) int {
-	valueStr := getEnv(name, "")
-	if valueStr == "" {
-		return defaultVal
-	}
-	value, err := strconv.Atoi(valueStr)
-	if err != nil {
-		log.Printf("Invalid %s value: %v, using default: %d", name, err, defaultVal)
-		return defaultVal
-	}
-	return value
-}
-
-func getEnvAsInt64(name string, defaultVal int64) int64 {
-	valueStr := getEnv(name, "")
-	if valueStr == "" {
-		return defaultVal
-	}
-	value, err := strconv.ParseInt(valueStr, 10, 64)
-	if err != nil {
-		log.Printf("Invalid %s value: %v, using default: %d", name, err, defaultVal)
-		return defaultVal
-	}
-	return value
-}
-
-func getEnvAsDuration(name string, defaultVal time.Duration) time.Duration {
-	valueStr := getEnv(name, "")
-	if valueStr == "" {
-		return defaultVal
-	}
-	value, err := time.ParseDuration(valueStr)
-	if err != nil {
-		log.Printf("Invalid %s value: %v, using default: %v", name, err, defaultVal)
-		return defaultVal
-	}
-	return value
 }

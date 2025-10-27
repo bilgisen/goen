@@ -65,8 +65,60 @@ func (g *GeminiClient) GenerateEnglishNews(ctx context.Context, item models.Feed
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// Retry up to 3 times with exponential backoff
+	var newsItem *models.NewsItem
+	var lastErr error
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			log.Debug().
+				Str("guid", item.Guid).
+				Int("attempt", attempt).
+				Msg("Retrying news processing")
+		}
+
+		newsItem, lastErr = g.generateEnglishNewsOnce(ctx, item)
+		if lastErr == nil {
+			break
+		}
+
+		// Don't retry on validation errors, only on API errors
+		if strings.Contains(lastErr.Error(), "missing required field") ||
+		   strings.Contains(lastErr.Error(), "content too short") {
+			break
+		}
+
+		// Wait before retrying (except on last attempt)
+		if attempt < 3 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * time.Second):
+				// Continue to next attempt
+			}
+		}
+	}
+
+	if lastErr != nil {
+		log.Error().
+			Err(lastErr).
+			Str("guid", item.Guid).
+			Msg("Failed to generate English news after all retries")
+		return nil, lastErr
+	}
+
+	log.Info().
+		Str("guid", item.Guid).
+		Str("title", newsItem.SeoTitle).
+		Msg("Successfully processed news item")
+
+	return newsItem, nil
+}
+
+func (g *GeminiClient) generateEnglishNewsOnce(ctx context.Context, item models.FeedItem) (*models.NewsItem, error) {
 	// Build the prompt
 	prompt := buildPrompt(item)
+	log := logger.Get()
 	log.Debug().
 		Str("guid", item.Guid).
 		Msg("Built prompt for Gemini API")
@@ -97,11 +149,6 @@ func (g *GeminiClient) GenerateEnglishNews(ctx context.Context, item models.Feed
 			Msg("Error parsing Gemini response")
 		return nil, fmt.Errorf("error parsing Gemini response: %w", err)
 	}
-
-	log.Info().
-		Str("guid", item.Guid).
-		Str("title", newsItem.SeoTitle).
-		Msg("Successfully processed news item")
 
 	return newsItem, nil
 }
@@ -167,48 +214,56 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 }
 
 func buildPrompt(item models.FeedItem) string {
-	return fmt.Sprintf(`You are an expert English journalist and SEO writer. 
-Transform this Turkish news article into a professional English version with the following structure:
+	return fmt.Sprintf(`
+You are a professional Reuters news editor rewriting Turkish news into clear, factual, and SEO-optimized English.
 
-1. SEO title (max 60 characters)
-2. SEO description (max 160 characters)
-3. TLDR (3 bullet points)
-4. Main content in markdown format
-5. Category (from the original)
-6. Tags (5-7 relevant keywords)
-7. Image title and description (for accessibility)
+---
 
-Respond in valid JSON format with these fields:
-- seo_title
-- seo_description
-- tldr (array of strings)
-- content_md (markdown formatted)
-- category (from original)
-- tags (array of strings)
-- image_title
-- image_description
+### 🧱 STRICT RULES (Follow Exactly)
+1. Always write "Türkiye", never "Turkey".
+2. Preserve all proper nouns (e.g., "İstanbul", "Ankara", "Recep Tayyip Erdoğan").
+3. The news body ("content_md") must contain only the rewritten article text.
+   - Exclude titles, dates, author lines, or metadata.
+   - Write in Reuters-style: concise, neutral, and fact-driven.
+   - Use Markdown formatting.
+   - Include "##" subheadings where logically needed.
+   - Keep paragraphs short (2–3 sentences).
+   - Maintain quotes accurately.
+4. Generate 5–7 tags based only on proper nouns.
+5. Add SEO fields:
+   - "seo_title": under 60 characters.
+   - "seo_description": 120–160 characters.
+6. Never invent facts. Summarize only what is known.
 
-Turkish Article:
+---
+
+### 🧠 RESPONSE FORMAT
+Return a valid JSON object only (no markdown fences):
+
+{
+  "seo_title": "Concise, factual SEO title under 60 characters",
+  "seo_description": "Clear summary between 120–160 characters",
+  "content_md": "Rewritten English article body in Markdown, with ## subheadings where needed",
+  "tags": ["Türkiye", "Ankara", "Baykar", "Recep Tayyip Erdoğan", "Ministry of Health"]
+}
+
+---
+
+### 📰 SOURCE ARTICLE (Turkish)
 Title: %s
-
 Content: %s
 
-Category: %s`, 
-		escapeJSON(item.TitleTR), 
-		escapeJSON(item.ContentTR), 
-		escapeJSON(item.Category))
+Now produce the JSON output following all rules exactly.
+`, escapeJSON(item.TitleTR), escapeJSON(item.ContentTR))
 }
+
 
 func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsItem, error) {
 	var result struct {
 		SeoTitle    string   `json:"seo_title"`
 		SeoDesc     string   `json:"seo_description"`
-		TLDR        []string `json:"tldr"`
 		ContentMD   string   `json:"content_md"`
-		Category    string   `json:"category"`
 		Tags        []string `json:"tags"`
-		ImageTitle  string   `json:"image_title"`
-		ImageDesc   string   `json:"image_desc"`
 	}
 
 	// Clean the response (sometimes Gemini adds markdown code blocks)
@@ -228,14 +283,11 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		SourceGuid:  item.Guid,
 		SeoTitle:    result.SeoTitle,
 		SeoDesc:     result.SeoDesc,
-		TLDR:        result.TLDR,
 		ContentMD:   result.ContentMD,
-		Category:    result.Category,
+		Category:    item.Category, // Use category from smart feed extraction
 		Tags:        result.Tags,
 		Image:       item.Image,
-		ImageTitle:  result.ImageTitle,
-		ImageDesc:   result.ImageDesc,
-		OriginalUrl: item.Url, // Using the actual URL from the feed item
+		OriginalUrl: item.Url,
 		CreatedAt:   time.Now(),
 	}, nil
 }

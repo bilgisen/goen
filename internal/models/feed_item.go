@@ -7,5 +7,5 @@ type FeedItem struct {
 	ContentTR string `json:"content"`
 	Image     string `json:"image"`
 	Url       string `json:"url"`
-	Category  string `json:"category"`
+	Category  string `json:"category,omitempty"` // Now optional - smart extracted from content
 }

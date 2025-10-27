@@ -144,7 +144,7 @@ func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem,
 				ContentTR: item.Content,
 				Image:     item.Image,
 				Url:       item.Link,
-				Category:  "general", // Default category
+				Category:  "", // Will be set by smart category extraction in parser
 			})
 		}
 		return items, nil
@@ -158,6 +158,8 @@ func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem,
 		if singleErr := json.Unmarshal(resp.Body(), &singleItem); singleErr != nil {
 			return nil, fmt.Errorf("failed to parse feed response: %w (tried both JSON feed and array formats)", err)
 		}
+		// Reset category so parser can do smart extraction
+		singleItem.Category = ""
 		items = []models.FeedItem{singleItem}
 	}
 

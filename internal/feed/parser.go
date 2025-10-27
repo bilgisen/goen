@@ -31,18 +31,82 @@ func (p *Parser) CleanHTML(input string) string {
 	cleaned = html.UnescapeString(cleaned)
 	// Normalize whitespace
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
-	return strings.TrimSpace(cleaned)
+// extractCategory intelligently determines the category from URL, title, and content
+func (p *Parser) extractCategory(url, title, content string) string {
+	// Category keywords mapping
+	categoryKeywords := map[string][]string{
+		"politics":    {"politik", "siyasi", "hükümet", "bakan", "cumhurbaşkanı", "milletvekili", "seçim", "tbmm", "siyaset"},
+		"economy":     {"ekonomi", "dolar", "euro", "faiz", "enflasyon", "büyüme", "gdp", "piyasa", "borsa", "hisse"},
+		"technology":  {"teknoloji", "yazılım", "app", "uygulama", "ai", "yapay zeka", "robot", "dijital", "startup"},
+		"sports":      {"spor", "futbol", "maç", "gol", "takım", "lig", "şampiyona", "olimpiyat", "atlet"},
+		"health":      {"sağlık", "hastane", "doktor", "tedavi", "ilaç", "aşı", "pandemi", "covid", "hastalık"},
+		"world":       {"dünya", "uluslararası", "abd", "amerika", "avrupa", "asya", "afrika", "bm", "nato"},
+		"culture":     {"kültür", "sanat", "müzik", "film", "sinema", "tiyatro", "kitap", "edebiyat", "festival"},
+		"education":   {"eğitim", "üniversite", "okul", "öğrenci", "öğretmen", "sınav", "mezun", "akademi"},
+		"science":     {"bilim", "araştırma", "çalışma", "uzay", "teknoloji", "inovasyon", "keşif"},
+	}
+
+	// Clean and lowercase all inputs
+	title = strings.ToLower(p.CleanHTML(title))
+	content = strings.ToLower(p.CleanHTML(content))
+	url = strings.ToLower(url)
+
+	// Check URL for category indicators
+	for category, keywords := range categoryKeywords {
+		for _, keyword := range keywords {
+			if strings.Contains(url, keyword) {
+				return category
+			}
+		}
+	}
+
+	// Check title for category indicators
+	for category, keywords := range categoryKeywords {
+		for _, keyword := range keywords {
+			if strings.Contains(title, keyword) {
+				return category
+			}
+		}
+	}
+
+	// Check content for category indicators (less weight)
+	for category, keywords := range categoryKeywords {
+		for _, keyword := range keywords {
+			if strings.Contains(content, keyword) {
+				return category
+			}
+		}
+	}
+
+	// Default categories based on common Turkish news site patterns
+	if strings.Contains(url, "siyaset") || strings.Contains(url, "politik") {
+		return "politics"
+	}
+	if strings.Contains(url, "ekonomi") || strings.Contains(url, "finans") {
+		return "economy"
+	}
+	if strings.Contains(url, "spor") {
+		return "sports"
+	}
+	if strings.Contains(url, "teknoloji") || strings.Contains(url, "tech") {
+		return "technology"
+	}
+
+	return "general"
 }
 
 // NormalizeFeedItem cleans and validates a single feed item
 func (p *Parser) NormalizeFeedItem(item models.FeedItem) models.FeedItem {
+	// Use smart category extraction
+	smartCategory := p.extractCategory(item.Url, item.TitleTR, item.ContentTR)
+
 	return models.FeedItem{
 		Guid:      strings.TrimSpace(item.Guid),
 		TitleTR:   p.CleanHTML(item.TitleTR),
 		ContentTR: p.CleanHTML(item.ContentTR),
 		Image:     strings.TrimSpace(item.Image),
 		Url:       strings.TrimSpace(item.Url),
-		Category:  strings.TrimSpace(item.Category),
+		Category:  smartCategory,
 	}
 }
 
