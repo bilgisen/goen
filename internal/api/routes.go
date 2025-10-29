@@ -44,6 +44,12 @@ func SetupRoutes(app *fiber.App, redisClient cache.RedisInterface, cfg *config.C
 		news.Get("/:id", handlers.GetNewsByID)    // Get single news by ID
 	}
 
+	// External API endpoints (protected by API key)
+	ext := api.Group("/external")
+	{
+		ext.Post("/process", handlers.ProcessFeedsExternal) // Process feeds via external API
+	}
+
 	// Admin endpoints (protected in production)
 	admin := api.Group("/admin")
 	{

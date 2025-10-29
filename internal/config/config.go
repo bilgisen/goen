@@ -48,7 +48,8 @@ type Config struct {
 	LogFile  string `json:"log_file"`
 
 	// Security
-	AdminAPIKey string `json:"admin_api_key"`
+	AdminAPIKey    string `json:"admin_api_key"`
+	ExternalApiKey string `json:"external_api_key"`
 }
 
 // Load loads configuration from config.yaml and environment variables

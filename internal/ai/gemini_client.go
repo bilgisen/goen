@@ -229,7 +229,7 @@ You are a professional Reuters news editor rewriting Turkish news into clear, fa
    - Include "##" subheadings where logically needed.
    - Keep paragraphs short (2–3 sentences).
    - Maintain quotes accurately.
-4. Generate 5–7 tags based only on proper nouns.
+4. Generate 3–5 tags based only on proper nouns. This field is REQUIRED and must not be empty. Include names of people, organizations, and locations mentioned in the article.
 5. Add SEO fields:
    - "seo_title": under 60 characters.
    - "seo_description": 120–160 characters.
@@ -277,15 +277,26 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		return nil, fmt.Errorf("failed to parse response: %w\nResponse: %s", err, cleanResponse)
 	}
 
+	// Ensure tags is never nil
+	tags := make([]string, 0)
+	if result.Tags != nil {
+		tags = result.Tags
+	}
+
+	// Validate that we have the required number of tags
+	if len(tags) < 3 {  // Require at least 3 tags
+		return nil, fmt.Errorf("insufficient tags generated: expected at least 3, got %d", len(tags))
+	}
+
 	// Create and return the news item
 	return &models.NewsItem{
 		ID:          generateID(),
 		SourceGuid:  item.Guid,
 		SeoTitle:    result.SeoTitle,
-		SeoDesc:     result.SeoDesc,
+		SeoDesc:     result.Seodesc,
 		ContentMD:   result.ContentMD,
 		Category:    item.Category, // Use category from smart feed extraction
-		Tags:        result.Tags,
+		Tags:        tags,
 		Image:       item.Image,
 		OriginalUrl: item.Url,
 		CreatedAt:   time.Now(),

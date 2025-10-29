@@ -51,7 +51,7 @@ func (p *PostProcessor) ProcessNewsItem(item *models.NewsItem) error {
 
 	// Ensure required fields have values
 	if item.Category == "" {
-		item.Category = "General"
+		item.Category = "turkiye"
 	}
 
 	// Set timestamps

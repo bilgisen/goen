@@ -142,6 +142,68 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 	return c.JSON(news)
 }
 
+// ProcessFeedsExternal handles POST /api/external/process
+// This is a simplified version of ProcessFeeds for external/cron use
+func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
+	// Get API key from header
+	apiKey := c.Get("X-API-Key")
+	if apiKey == "" || apiKey != h.config.ExternalApiKey {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid or missing API key",
+		})
+	}
+
+	// Get feed URLs from request body or use default from config
+	var requestBody struct {
+		FeedURLs []string `json:"feed_urls"`
+	}
+
+	if err := c.BodyParser(&requestBody); err != nil {
+		// If no body provided, use default feeds from config
+		requestBody.FeedURLs = h.config.FeedURLs
+	}
+
+	// If still no feed URLs, return error
+	if len(requestBody.FeedURLs) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "No feed URLs provided and no default feeds configured",
+		})
+	}
+
+	// Process the feeds
+	items, err := h.processor.ProcessFeeds(c.Context(), requestBody.FeedURLs)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "Failed to process feeds",
+			"details": err.Error(),
+		})
+	}
+
+	// Process items with AI if Gemini client is available
+	var processedCount int
+	if h.gemini != nil {
+		for _, item := range items {
+			_, err := h.gemini.GenerateEnglishNews(c.Context(), item)
+			if err != nil {
+				logger.Get().Error().
+					Err(err).
+					Str("guid", item.Guid).
+					Msg("Failed to process item with AI")
+				continue
+			}
+			processedCount++
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"status":         "success",
+		"total_items":    len(items),
+		"processed":      processedCount,
+		"failed":         len(items) - processedCount,
+		"processed_time": time.Now().Format(time.RFC3339),
+	})
+}
+
 // ProcessFeeds handles POST /api/admin/process
 func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
 	// Check API key for admin endpoints
