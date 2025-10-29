@@ -37,11 +37,12 @@ type Config struct {
 	AIMaxTokens int    `json:"ai_max_tokens"`
 
 	// Storage
-	StoragePath    string `json:"storage_path"`
-	FeedSourcePath string `json:"feed_source_path"`
-	ProcessedPath  string `json:"processed_path"`
-	RetentionDays  int    `json:"retention_days"`
-	MaxFileSize    int64  `json:"max_file_size"`
+	StoragePath    string   `json:"storage_path"`
+	FeedSourcePath string   `json:"feed_source_path"`
+	FeedURLs       []string `json:"feed_urls"` // Default feed URLs to process
+	ProcessedPath  string   `json:"processed_path"`
+	RetentionDays  int      `json:"retention_days"`
+	MaxFileSize    int64    `json:"max_file_size"`
 
 	// Logging
 	LogLevel string `json:"log_level"`
@@ -161,6 +162,14 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.FeedSourcePath == "" {
 		cfg.FeedSourcePath = "./data/feeds/"
+	}
+	if len(cfg.FeedURLs) == 0 {
+		// Set some default news feed URLs if none provided
+		cfg.FeedURLs = []string{
+			"https://www.ekonomim.com/rss",
+			"https://www.ntv.com.tr/spor.rss",
+			"https://www.ntv.com.tr/dunya.rss",
+		}
 	}
 	if cfg.ProcessedPath == "" {
 		cfg.ProcessedPath = "./data/processed/"
