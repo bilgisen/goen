@@ -293,7 +293,7 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		ID:          generateID(),
 		SourceGuid:  item.Guid,
 		SeoTitle:    result.SeoTitle,
-		SeoDesc:     result.Seodesc,
+		SeoDesc:     result.SeoDesc,
 		ContentMD:   result.ContentMD,
 		Category:    item.Category, // Use category from smart feed extraction
 		Tags:        tags,
