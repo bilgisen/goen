@@ -144,13 +144,16 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 
 // ProcessFeedsExternal handles POST /api/external/process
 // This is a simplified version of ProcessFeeds for external/cron use
+// API key is optional but recommended for production use
 func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
-	// Get API key from header
-	apiKey := c.Get("X-API-Key")
-	if apiKey == "" || apiKey != h.config.ExternalApiKey {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Invalid or missing API key",
-		})
+	// Check API key if configured
+	if h.config.ExternalApiKey != "" {
+		apiKey := c.Get("X-API-Key")
+		if apiKey != h.config.ExternalApiKey {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid or missing API key",
+			})
+		}
 	}
 
 	// Get feed URLs from request body or use default from config
