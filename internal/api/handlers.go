@@ -145,6 +145,7 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 // ProcessFeedsExternal handles POST /api/external/process
 // This is a simplified version of ProcessFeeds for external/cron use
 // API key is optional but recommended for production use
+// This endpoint processes feeds asynchronously and returns immediately
 func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 	// Check API key if configured
 	if h.config.ExternalApiKey != "" {
@@ -173,37 +174,53 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 		})
 	}
 
-	// Process the feeds
-	items, err := h.processor.ProcessFeeds(c.Context(), requestBody.FeedURLs)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "Failed to process feeds",
-			"details": err.Error(),
-		})
-	}
+	// Start processing feeds in a goroutine
+	go func(urls []string) {
+		// Create a new context with a timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 
-	// Process items with AI if Gemini client is available
-	var processedCount int
-	if h.gemini != nil {
-		for _, item := range items {
-			_, err := h.gemini.GenerateEnglishNews(c.Context(), item)
-			if err != nil {
-				logger.Get().Error().
-					Err(err).
-					Str("guid", item.Guid).
-					Msg("Failed to process item with AI")
-				continue
-			}
-			processedCount++
+		logger.Get().Info().
+			Strs("feed_urls", urls).
+			Msg("Starting async feed processing")
+
+		// Process the feeds
+		items, err := h.processor.ProcessFeeds(ctx, urls)
+		if err != nil {
+			logger.Get().Error().
+				Err(err).
+				Msg("Failed to process feeds")
+			return
 		}
-	}
 
+		// Process items with AI if Gemini client is available
+		var processedCount int
+		if h.gemini != nil {
+			for _, item := range items {
+				_, err := h.gemini.GenerateEnglishNews(ctx, item)
+				if err != nil {
+					logger.Get().Error().
+						Err(err).
+						Str("guid", item.Guid).
+						Msg("Failed to process item with AI")
+					continue
+				}
+				processedCount++
+			}
+		}
+
+		logger.Get().Info().
+			Int("total_items", len(items)).
+			Int("processed", processedCount).
+			Int("failed", len(items)-processedCount).
+			Msg("Completed feed processing")
+	}(requestBody.FeedURLs)
+
+	// Return immediately with processing started message
 	return c.JSON(fiber.Map{
-		"status":         "success",
-		"total_items":    len(items),
-		"processed":      processedCount,
-		"failed":         len(items) - processedCount,
-		"processed_time": time.Now().Format(time.RFC3339),
+		"status":  "processing_started",
+		"message": "Feed processing has started asynchronously",
+		"feeds":   requestBody.FeedURLs,
 	})
 }
 
