@@ -142,7 +142,7 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 	return c.JSON(news)
 }
 
-// ProcessFeedsExternal handles POST /api/external/process
+// ProcessFeedsExternal handles POST /api/v1/external/process
 // This is a simplified version of ProcessFeeds for external/cron use
 // API key is optional but recommended for production use
 // This endpoint processes feeds asynchronously and returns immediately
@@ -152,7 +152,8 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 		apiKey := c.Get("X-API-Key")
 		if apiKey != h.config.ExternalApiKey {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Invalid or missing API key",
+				"status":  "error",
+				"message": "Invalid or missing API key",
 			})
 		}
 	}
@@ -170,75 +171,109 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 	// If still no feed URLs, return error
 	if len(requestBody.FeedURLs) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "No feed URLs provided and no default feeds configured",
+			"status":  "error",
+			"message": "No feed URLs provided and no default feeds configured",
 		})
 	}
 
-	// Start processing feeds in a goroutine
+	log := logger.Get()
+	log.Info().
+		Strs("feed_urls", requestBody.FeedURLs).
+		Msg("Starting external feed processing")
+
+	// Start processing in a goroutine
 	go func(urls []string) {
-		// Create a new context with a timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 
-		log := logger.Get()
 		log.Info().
-			Strs("feed_urls", urls).
-			Msg("Starting async feed processing")
+			Int("feed_count", len(urls)).
+			Msg("Starting feed processing in background")
 
-		// Process the feeds
+		// Process feeds
 		items, err := h.processor.ProcessFeeds(ctx, urls)
 		if err != nil {
 			log.Error().
 				Err(err).
-				Msg("Failed to process feeds")
+				Int("url_count", len(urls)).
+				Msg("Error processing feeds")
 			return
 		}
 
-		// Process items with AI if Gemini client is available
-		var processedCount int
-		if h.gemini != nil {
-			for _, item := range items {
-				// Generate English content
+		log.Info().
+			Int("items_to_process", len(items)).
+			Msg("Starting to process feed items with AI")
+
+		// Process each item with AI
+		for _, item := range items {
+			select {
+			case <-ctx.Done():
+				log.Warn().
+					Str("guid", item.Guid).
+					Msg("Processing cancelled due to timeout")
+				return
+			default:
+				// Skip AI processing if Gemini client is not available
+				if h.gemini == nil {
+					log.Warn().
+						Str("title", item.TitleTR).
+						Msg("Gemini client not available, skipping AI processing")
+					continue
+				}
+
+				// Generate English content using Gemini
 				newsItem, err := h.gemini.GenerateEnglishNews(ctx, item)
 				if err != nil {
 					log.Error().
 						Err(err).
-						Str("guid", item.Guid).
-						Msg("Failed to process item with AI")
+						Str("title", item.TitleTR).
+						Msg("Error generating English news")
 					continue
+				}
+
+				// Post-process the generated content
+				if h.postProc != nil {
+					if err := h.postProc.ProcessNewsItem(newsItem); err != nil {
+						log.Error().
+							Err(err).
+							Str("id", newsItem.ID).
+							Msg("Error post-processing news item")
+						continue
+					}
 				}
 
 				// Save the processed item to storage
-				if err := h.storage.SaveNewsItem(ctx, newsItem); err != nil {
+				if err := h.storage.SaveNews(newsItem); err != nil {
+					log.Error().
+						Err(err).
+						Str("id", newsItem.ID).
+						Msg("Error saving news item to storage")
+				} else {
+					log.Info().
+						Str("id", newsItem.ID).
+						Msg("Successfully saved news item to storage")
+				}
+
+				// Mark as processed
+				if err := h.processor.MarkAsProcessed(ctx, []string{item.Guid}, h.config.CacheTTL); err != nil {
 					log.Error().
 						Err(err).
 						Str("guid", item.Guid).
-						Msg("Failed to save news item to storage")
-					continue
+						Msg("Error marking item as processed")
 				}
-
-				processedCount++
 			}
 		}
 
 		log.Info().
-			Int("total_items", len(items)).
-			Int("processed", processedCount).
-			Int("failed", len(items)-processedCount).
-			Msg("Completed feed processing and storage")
+			Int("total_items_processed", len(items)).
+			Msg("Finished processing all feed items")
 
-		// Mark feeds as processed
-		if err := h.processor.MarkAsProcessed(ctx, urls, 24*time.Hour); err != nil {
-			log.Error().
-				Err(err).
-				Msg("Failed to mark feeds as processed in cache")
-		}
 	}(requestBody.FeedURLs)
 
 	// Return immediately with processing started message
 	return c.JSON(fiber.Map{
-		"status":  "processing_started",
-		"message": "Feed processing has started asynchronously",
+		"status":  "success",
+		"message": fmt.Sprintf("Processing %d feed(s) in the background", len(requestBody.FeedURLs)),
 		"feeds":   requestBody.FeedURLs,
 	})
 }
