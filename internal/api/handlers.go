@@ -180,14 +180,15 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
-		logger.Get().Info().
+		log := logger.Get()
+		log.Info().
 			Strs("feed_urls", urls).
 			Msg("Starting async feed processing")
 
 		// Process the feeds
 		items, err := h.processor.ProcessFeeds(ctx, urls)
 		if err != nil {
-			logger.Get().Error().
+			log.Error().
 				Err(err).
 				Msg("Failed to process feeds")
 			return
@@ -197,23 +198,41 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 		var processedCount int
 		if h.gemini != nil {
 			for _, item := range items {
-				_, err := h.gemini.GenerateEnglishNews(ctx, item)
+				// Generate English content
+				newsItem, err := h.gemini.GenerateEnglishNews(ctx, item)
 				if err != nil {
-					logger.Get().Error().
+					log.Error().
 						Err(err).
 						Str("guid", item.Guid).
 						Msg("Failed to process item with AI")
 					continue
 				}
+
+				// Save the processed item to storage
+				if err := h.storage.SaveNewsItem(ctx, newsItem); err != nil {
+					log.Error().
+						Err(err).
+						Str("guid", item.Guid).
+						Msg("Failed to save news item to storage")
+					continue
+				}
+
 				processedCount++
 			}
 		}
 
-		logger.Get().Info().
+		log.Info().
 			Int("total_items", len(items)).
 			Int("processed", processedCount).
 			Int("failed", len(items)-processedCount).
-			Msg("Completed feed processing")
+			Msg("Completed feed processing and storage")
+
+		// Mark feeds as processed
+		if err := h.processor.MarkAsProcessed(ctx, urls, 24*time.Hour); err != nil {
+			log.Error().
+				Err(err).
+				Msg("Failed to mark feeds as processed in cache")
+		}
 	}(requestBody.FeedURLs)
 
 	// Return immediately with processing started message
