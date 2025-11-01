@@ -190,6 +190,15 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 			Int("feed_count", len(urls)).
 			Msg("Starting feed processing in background")
 
+		// Check for required services
+		if h.gemini == nil || h.postProc == nil {
+			log.Error().
+				Bool("gemini_initialized", h.gemini != nil).
+				Bool("postproc_initialized", h.postProc != nil).
+				Msg("Required services not initialized")
+			return
+		}
+
 		// Process feeds
 		items, err := h.processor.ProcessFeeds(ctx, urls)
 		if err != nil {
