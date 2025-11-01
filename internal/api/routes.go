@@ -55,6 +55,8 @@ func SetupRoutes(app *fiber.App, redisClient cache.RedisInterface, cfg *config.C
 	{
 		admin.Post("/process", handlers.ProcessFeeds) // Process new feeds
 		admin.Delete("/news/:id", handlers.DeleteNews) // Delete a news item
+		// Debug endpoint to list all news items
+		admin.Get("/debug/news/all", handlers.DebugListAllNews)
 	}
 
 	// 404 Handler

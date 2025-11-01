@@ -337,66 +337,103 @@ func (r *R2Storage) GetNewsByID(id string) (*models.NewsItem, error) {
 	return &item, nil
 }
 func (r *R2Storage) ListNews(page, pageSize int) ([]*models.NewsItem, error) {
-	// List all objects in processed/ directory
-	listResult, err := r.s3Client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-		Bucket: aws.String(r.bucket),
-		Prefix: aws.String("processed/"),
-	})
+    var allObjects []types.Object
+    var continuationToken *string
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to list objects in R2: %w", err)
-	}
+    // First, list all objects with pagination
+    for {
+        listResult, err := r.s3Client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+            Bucket:            aws.String(r.bucket),
+            Prefix:            aws.String("processed/"),
+            ContinuationToken: continuationToken,
+        })
 
-	// Filter only JSON files and sort by last modified (newest first)
-	var jsonObjects []types.Object
-	for _, obj := range listResult.Contents {
-		if strings.HasSuffix(*obj.Key, ".json") {
-			jsonObjects = append(jsonObjects, obj)
-		}
-	}
+        if err != nil {
+            return nil, fmt.Errorf("failed to list objects in R2: %w", err)
+        }
 
-	// Sort by last modified time (newest first)
-	sort.Slice(jsonObjects, func(i, j int) bool {
-		return jsonObjects[i].LastModified.After(*jsonObjects[j].LastModified)
-	})
+        // Filter only JSON files
+        for _, obj := range listResult.Contents {
+            if strings.HasSuffix(*obj.Key, ".json") {
+                allObjects = append(allObjects, obj)
+            }
+        }
 
-	// Apply pagination
-	start := (page - 1) * pageSize
-	if start >= len(jsonObjects) {
-		return []*models.NewsItem{}, nil
-	}
+        // Check if there are more objects to fetch
+        if !aws.ToBool(listResult.IsTruncated) {
+            break
+        }
+        continuationToken = listResult.NextContinuationToken
+    }
 
-	end := start + pageSize
-	if end > len(jsonObjects) {
-		end = len(jsonObjects)
-	}
+    // Sort by last modified time (newest first)
+    sort.Slice(allObjects, func(i, j int) bool {
+        return allObjects[i].LastModified.After(*allObjects[j].LastModified)
+    })
 
-	var newsItems []*models.NewsItem
+    // Apply pagination
+    start := (page - 1) * pageSize
+    if start >= len(allObjects) {
+        return []*models.NewsItem{}, nil
+    }
 
-	// Fetch and unmarshal each news item
-	for _, obj := range jsonObjects[start:end] {
-		getResult, err := r.s3Client.GetObject(context.TODO(), &s3.GetObjectInput{
-			Bucket: aws.String(r.bucket),
-			Key:    aws.String(*obj.Key),
-		})
+    end := start + pageSize
+    if end > len(allObjects) {
+        end = len(allObjects)
+    }
 
-		if err != nil {
-			// Log error but continue with other items
-			continue
-		}
+    var newsItems []*models.NewsItem
+    var wg sync.WaitGroup
+    var mu sync.Mutex
+    errCh := make(chan error, end-start)
 
-		var item models.NewsItem
-		if err := json.NewDecoder(getResult.Body).Decode(&item); err != nil {
-			getResult.Body.Close()
-			continue
-		}
+    // Fetch and unmarshal each news item in parallel
+    for _, obj := range allObjects[start:end] {
+        wg.Add(1)
+        go func(obj types.Object) {
+            defer wg.Done()
 
-		getResult.Body.Close()
-		item.FilePath = *obj.Key
-		newsItems = append(newsItems, &item)
-	}
+            getResult, err := r.s3Client.GetObject(context.TODO(), &s3.GetObjectInput{
+                Bucket: aws.String(r.bucket),
+                Key:    obj.Key,
+            })
+            if err != nil {
+                errCh <- fmt.Errorf("failed to get object %s: %w", *obj.Key, err)
+                return
+            }
+            defer getResult.Body.Close()
 
-	return newsItems, nil
+            var item models.NewsItem
+            if err := json.NewDecoder(getResult.Body).Decode(&item); err != nil {
+                errCh <- fmt.Errorf("failed to decode object %s: %w", *obj.Key, err)
+                return
+            }
+
+            item.FilePath = *obj.Key
+            
+            mu.Lock()
+            newsItems = append(newsItems, &item)
+            mu.Unlock()
+        }(obj)
+    }
+
+    // Wait for all goroutines to complete
+    go func() {
+        wg.Wait()
+        close(errCh)
+    }()
+
+    // Collect any errors
+    var errors []error
+    for err := range errCh {
+        errors = append(errors, err)
+    }
+
+    if len(errors) > 0 {
+        return newsItems, fmt.Errorf("encountered %d errors while fetching news items, first error: %w", len(errors), errors[0])
+    }
+
+    return newsItems, nil
 }
 func (r *R2Storage) DeleteNews(id string) error {
 	// Find the item first to get the key

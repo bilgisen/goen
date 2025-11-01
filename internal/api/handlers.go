@@ -468,6 +468,43 @@ func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
 	})
 }
 
+// DebugListAllNews is a debug endpoint to list all news items
+func (h *Handlers) DebugListAllNews(c *fiber.Ctx) error {
+	log := logger.Get()
+	
+	// Use a large page size to get all items
+	items, err := h.storage.ListNews(1, 1000) // Get up to 1000 items from the first page
+	if err != nil {
+		log.Error().
+			Err(err).
+			Msg("Error getting all news items")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to get news items",
+		})
+	}
+
+	// Get storage type for debugging
+	storageType := "unknown"
+	switch h.storage.(type) {
+	case *storage.FileStorage:
+		storageType = "file"
+	case *storage.R2Storage:
+		storageType = "r2"
+	}
+
+	log.Info().
+		Int("total_items", len(items)).
+		Str("storage_type", storageType).
+		Msg("Debug: Listed all news items")
+
+	return c.JSON(fiber.Map{
+		"status":     "success",
+		"count":      len(items),
+		"storage":    storageType,
+		"items":      items,
+	})
+}
+
 // DeleteNews handles DELETE /api/admin/news/:id
 func (h *Handlers) DeleteNews(c *fiber.Ctx) error {
 	// Check API key for admin endpoints

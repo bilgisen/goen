@@ -54,9 +54,13 @@ func estimateTokens(text string) int {
 }
 
 // WaitIfNeeded blocks if rate limits are reached
+// It respects the context's deadline and will return early if the context is cancelled or times out
 func (r *RedisLimiter) WaitIfNeeded(ctx context.Context, usedTokens int) error {
-	// Check Redis connection
-	if err := r.client.Ping(ctx).Err(); err != nil {
+	// Check Redis connection with a short timeout to avoid hanging
+	redisCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	
+	if err := r.client.Ping(redisCtx).Err(); err != nil {
 		logger.Get().Error().
 			Err(err).
 			Msg("Redis connection check failed, rate limiting may be inaccurate")
@@ -84,7 +88,8 @@ func (r *RedisLimiter) WaitIfNeeded(ctx context.Context, usedTokens int) error {
 		// Calculate time until next minute window
 		sleep := time.Until(time.Unix((now/60+1)*60, 0))
 		
-		logger.Get().Info().
+		// Log the rate limit hit with detailed information
+		logger.Get().Warn().
 			Int("requests", req).
 			Int("max_requests", r.rpm).
 			Int("tokens_used", tok).
@@ -92,11 +97,17 @@ func (r *RedisLimiter) WaitIfNeeded(ctx context.Context, usedTokens int) error {
 			Dur("wait_time", sleep).
 			Msg("Rate limit reached, waiting for next window")
 		
+		// Create a timer for the sleep duration
+		timer := time.NewTimer(sleep)
+		defer timer.Stop()
+		
+		// Wait for either the timer to complete or the context to be done
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(sleep):
-			// Reset counters for the new window
+			// Context was cancelled or timed out
+			return fmt.Errorf("rate limit wait cancelled: %w", ctx.Err())
+		case <-timer.C:
+			// Successfully waited for the next window
 			return nil
 		}
 	}

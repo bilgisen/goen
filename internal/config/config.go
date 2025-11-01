@@ -143,7 +143,8 @@ func applyDefaults(cfg *Config) {
 		cfg.ShutdownTimeout = 10 * time.Second
 	}
 	if cfg.HTTPTimeout == 0 {
-		cfg.HTTPTimeout = 30 * time.Second
+		// Increased to 75s to accommodate rate limiter's full wait time (60s) + buffer
+		cfg.HTTPTimeout = 75 * time.Second
 	}
 	if cfg.RedisURL == "" {
 		cfg.RedisURL = "redis://localhost:6379/0"
