@@ -64,10 +64,27 @@ func NewHandlers(cfg *config.Config, redis cache.RedisInterface) (*Handlers, err
 		}
 	}
 
-	// Initialize Gemini client (optional for basic functionality)
+	// Initialize Gemini client with Redis-based rate limiting
 	var gemini *ai.GeminiClient
 	if cfg.AIApiKey != "" && cfg.AIApiKey != "test-key" {
-		gemini = ai.NewGeminiClient(cfg.AIApiKey, cfg.AIModel)
+		var err error
+		gemini, err = ai.NewGeminiClient(
+			cfg.AIApiKey,
+			cfg.AIModel,
+			cfg.AIRateLimit,  // Requests per minute
+			cfg.AITPMLimit,   // Tokens per minute
+			cfg.RedisURL,     // Redis connection URL
+		)
+		if err != nil {
+			logger.Get().Error().
+				Err(err).
+				Msg("Failed to initialize Gemini client with rate limiting")
+		} else {
+			logger.Get().Info().
+				Int("rpm", cfg.AIRateLimit).
+				Int("tpm", cfg.AITPMLimit).
+				Msg("Initialized Gemini client with Redis rate limiting")
+		}
 	}
 
 	return &Handlers{

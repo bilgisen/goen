@@ -18,7 +18,7 @@ type Config struct {
 	HTTPTimeout     time.Duration `json:"http_timeout"`
 
 	// Redis configuration
-	RedisURL       string `json:"redis_url"`
+	RedisURL       string `json:"redis_url"` // Redis connection URL for rate limiting and caching
 	RedisPrefix    string `json:"redis_prefix"`
 	CacheTTL       time.Duration `json:"cache_ttl"`
 	MaxConcurrency int    `json:"max_concurrency"`
@@ -31,10 +31,12 @@ type Config struct {
 	R2AccountID     string `json:"r2_account_id"`
 
 	// AI Configuration
-	AIApiKey    string `json:"ai_api_key"`
-	AIModel     string `json:"ai_model"`
-	AITimeout   int    `json:"ai_timeout"`
-	AIMaxTokens int    `json:"ai_max_tokens"`
+	AIApiKey     string `json:"ai_api_key"`
+	AIModel      string `json:"ai_model"`
+	AITimeout    int    `json:"ai_timeout"`
+	AIMaxTokens  int    `json:"ai_max_tokens"`
+	AIRateLimit  int    `json:"ai_rate_limit"`  // Max requests per minute
+	AITPMLimit   int    `json:"ai_tpm_limit"`   // Max tokens per minute
 
 	// Storage
 	StoragePath    string   `json:"storage_path"`
@@ -60,6 +62,13 @@ func Load() *Config {
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		log.Printf("Warning: Error loading .env file: %v", err)
 	}
+	
+	// Load environment variables for Redis
+	// This allows different Redis URLs for different environments
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379/0" // Default for development
+	}
 
 	// Set up Viper to read config.yaml
 	viper.SetConfigName("config")
@@ -77,16 +86,16 @@ func Load() *Config {
 
 	cfg := &Config{
 		// Server configuration
-		Port:            viper.GetString("PORT"),
-		Env:             viper.GetString("APP_ENV"),
-		ShutdownTimeout: viper.GetDuration("SHUTDOWN_TIMEOUT") * time.Second,
-		HTTPTimeout:     viper.GetDuration("HTTP_TIMEOUT") * time.Second,
+		Port:            viper.GetString("server.port"),
+		Env:             viper.GetString("server.environment"),
+		ShutdownTimeout: viper.GetDuration("server.shutdown_timeout"),
+		HTTPTimeout:     viper.GetDuration("server.http_timeout"),
 
-		// Redis configuration
-		RedisURL:       viper.GetString("REDIS_URL"),
-		RedisPrefix:    viper.GetString("REDIS_PREFIX"),
-		CacheTTL:       viper.GetDuration("CACHE_TTL"),
-		MaxConcurrency: viper.GetInt("MAX_CONCURRENCY"),
+		// Redis configuration - using environment variable if set
+		RedisURL:       redisURL, // From environment variable or default
+		RedisPrefix:    viper.GetString("redis.prefix"),
+		CacheTTL:       viper.GetDuration("redis.cache_ttl"),
+		MaxConcurrency: viper.GetInt("redis.max_concurrency"),
 
 		// AI Configuration
 		AIApiKey:    viper.GetString("AI_API_KEY"),
@@ -156,6 +165,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.AIMaxTokens == 0 {
 		cfg.AIMaxTokens = 2000
+	}
+	if cfg.AIRateLimit == 0 {
+		cfg.AIRateLimit = 15 // Default to 15 requests per minute
+	}
+	if cfg.AITPMLimit == 0 {
+		cfg.AITPMLimit = 250000 // Default to 250K tokens per minute
+	}
+	if cfg.RedisURL == "" {
+		cfg.RedisURL = os.Getenv("REDIS_URL") // Fallback to env var if not set in config
 	}
 	if cfg.StoragePath == "" {
 		cfg.StoragePath = "./data"

@@ -6,8 +6,12 @@ server:
   shutdown_timeout: 30s
 
 # Redis Configuration
+# Note: Set REDIS_URL in your environment variables
+# Example for local development: export REDIS_URL=redis://localhost:6379/0
+# The URL will be loaded from the environment variable
 redis:
-  url: "redis://localhost:6379/0"  # Will be overridden by REDIS_URL environment variable
+  prefix: "goen:"  # Redis key prefix
+  cache_ttl: 24h   # Default cache TTL
   pool_size: 10
   min_idle_conns: 5
   dial_timeout: 5s
@@ -23,6 +27,8 @@ ai:
   timeout: 60s  # Will be overridden by AI_TIMEOUT environment variable
   temperature: 0.6
   max_tokens: 2000  # Will be overridden by AI_MAX_TOKENS environment variable
+  rate_limit: 15     # Requests per minute (can be overridden by AI_RATE_LIMIT)
+  tpm_limit: 250000  # Tokens per minute (can be overridden by AI_TPM_LIMIT)
 
 # Feed Processing
 feed:

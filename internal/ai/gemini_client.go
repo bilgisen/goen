@@ -1,3 +1,4 @@
+// internal/ai/gemini_client.go
 package ai
 
 import (
@@ -13,10 +14,12 @@ import (
 )
 
 type GeminiClient struct {
-	client  *resty.Client
-	apiKey  string
-	model   string
-	baseURL string
+	client    *resty.Client
+	apiKey    string
+	model     string
+	baseURL   string
+	limiter   *RedisLimiter // Redis-based rate limiter
+	tpmLimit  int           // Tokens per minute limit
 }
 
 type geminiRequest struct {
@@ -44,17 +47,54 @@ type geminiResponse struct {
 	} `json:"error"`
 }
 
-func NewGeminiClient(apiKey, model string) *GeminiClient {
-	return &GeminiClient{
-		client:  resty.New().SetTimeout(60 * time.Second),
-		apiKey:  apiKey,
-		model:   model,
-		baseURL: "https://generativelanguage.googleapis.com/v1beta/models",
+// NewGeminiClient creates a new Gemini client with Redis-based rate limiting
+// rpm is the maximum number of requests per minute
+// tpm is the maximum number of tokens per minute
+// redisURL is the connection string for Redis (e.g., "redis://user:password@localhost:6379/0")
+func NewGeminiClient(apiKey, model string, rpm, tpm int, redisURL string) (*GeminiClient, error) {
+	var limiter *RedisLimiter
+	var err error
+
+	// Initialize Redis limiter if URL is provided
+	if redisURL != "" {
+		limiter, err = NewRedisLimiter(redisURL, "gemini", rpm, tpm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize rate limiter: %w", err)
+		}
 	}
+
+	client := resty.New().
+		SetTimeout(60 * time.Second).
+		SetRetryCount(2).
+		SetRetryWaitTime(2 * time.Second).
+		SetRetryMaxWaitTime(10 * time.Second).
+		AddRetryCondition(
+			func(r *resty.Response, err error) bool {
+				// Retry on 429 (Too Many Requests) or 5xx errors
+				return r.StatusCode() == 429 || (r.StatusCode() >= 500 && r.StatusCode() < 600)
+			},
+		)
+
+	return &GeminiClient{
+		client:   client,
+		apiKey:   apiKey,
+		model:    model,
+		baseURL:  "https://generativelanguage.googleapis.com/v1beta/models",
+		limiter:  limiter,
+		tpmLimit: tpm,
+	}, nil
 }
 
 // GenerateEnglishNews processes a Turkish news item and returns an English version
 func (g *GeminiClient) GenerateEnglishNews(ctx context.Context, item models.FeedItem) (*models.NewsItem, error) {
+	// Apply rate limiting if enabled
+	if g.limiter != nil {
+		// Use the improved token estimation function
+		estimatedTokens := estimateTokens(item.ContentTR)
+		if err := g.limiter.WaitIfNeeded(ctx, estimatedTokens); err != nil {
+			return nil, fmt.Errorf("rate limit wait failed: %w", err)
+		}
+	}
 	log := logger.Get()
 	log.Info().
 		Str("guid", item.Guid).
