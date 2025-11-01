@@ -61,7 +61,7 @@ func (p *Processor) ProcessFeeds(ctx context.Context, feedURLs []string) ([]mode
 		Dur("validation_duration", time.Since(start)).
 		Msg("Validated feed items")
 
-	// Filter out duplicates using cache
+	// Filter out duplicates using cache and mark them as processed
 	uniqueItems, err := p.filterDuplicates(ctx, validItems)
 	if err != nil {
 		log.Error().
@@ -74,32 +74,6 @@ func (p *Processor) ProcessFeeds(ctx context.Context, feedURLs []string) ([]mode
 		Int("unique_items", len(uniqueItems)).
 		Dur("total_duration", time.Since(start)).
 		Msg("Finished processing feeds")
-
-	// Mark the processed items as processed in the cache
-	if len(uniqueItems) > 0 {
-		// Extract URLs from unique items
-		urls := make([]string, 0, len(uniqueItems))
-		for _, item := range uniqueItems {
-			if item.Url != "" {
-				urls = append(urls, item.Url)
-			}
-		}
-
-		// Mark URLs as processed with a 7-day TTL
-		ttl := 7 * 24 * time.Hour
-		if err := p.MarkAsProcessed(ctx, urls, ttl); err != nil {
-			log.Error().
-				Err(err).
-				Int("url_count", len(urls)).
-				Msg("Failed to mark items as processed in cache")
-			// Continue even if marking as processed fails
-		} else {
-			log.Info().
-				Int("url_count", len(urls)).
-				Dur("ttl", ttl).
-				Msg("Successfully marked items as processed in cache")
-		}
-	}
 
 	return uniqueItems, nil
 }
@@ -173,6 +147,17 @@ func (p *Processor) filterDuplicates(ctx context.Context, items []models.FeedIte
 				duplicateCount++
 				mu.Unlock()
 			} else {
+				// Mark as processed immediately with a 7-day TTL
+				ttl := 7 * 24 * time.Hour
+				if err := p.cache.MarkProcessed(ctx, hash, ttl); err != nil {
+					log.Error().
+						Err(err).
+						Str("url", item.Url).
+						Str("guid", item.Guid).
+						Msg("Failed to mark item as processed")
+					// Continue with the next item even if marking fails
+				}
+				
 				log.Debug().
 					Str("url", item.Url).
 					Str("guid", item.Guid).
