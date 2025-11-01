@@ -75,6 +75,32 @@ func (p *Processor) ProcessFeeds(ctx context.Context, feedURLs []string) ([]mode
 		Dur("total_duration", time.Since(start)).
 		Msg("Finished processing feeds")
 
+	// Mark the processed items as processed in the cache
+	if len(uniqueItems) > 0 {
+		// Extract URLs from unique items
+		urls := make([]string, 0, len(uniqueItems))
+		for _, item := range uniqueItems {
+			if item.Url != "" {
+				urls = append(urls, item.Url)
+			}
+		}
+
+		// Mark URLs as processed with a 7-day TTL
+		ttl := 7 * 24 * time.Hour
+		if err := p.MarkAsProcessed(ctx, urls, ttl); err != nil {
+			log.Error().
+				Err(err).
+				Int("url_count", len(urls)).
+				Msg("Failed to mark items as processed in cache")
+			// Continue even if marking as processed fails
+		} else {
+			log.Info().
+				Int("url_count", len(urls)).
+				Dur("ttl", ttl).
+				Msg("Successfully marked items as processed in cache")
+		}
+	}
+
 	return uniqueItems, nil
 }
 
