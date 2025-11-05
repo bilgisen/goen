@@ -255,41 +255,39 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 
 func buildPrompt(item models.FeedItem) string {
 	return fmt.Sprintf(`
-You are a professional Reuters news editor rewriting Turkish news into clear, factual, and SEO-optimized English.
+You are a professional Reuters news editor. Your task is to **translate and rewrite Turkish news entirely in English**.
+
+---
+### LANGUAGE RULES
+- The entire response **must be written in English only**. 
+- Never use Turkish words or sentences in any field.
+- Translate all Turkish names and terms if an English equivalent exists (e.g. "Cumhurbaşkanı" → "President").
+- Preserve Turkish proper nouns as-is (e.g. "İstanbul", "Ankara", "Recep Tayyip Erdoğan").
+- Do NOT output Turkish in title, description, or content.
 
 ---
 
-### 🧱 STRICT RULES (Follow Exactly)
+### STYLE RULES
 1. Always write "Türkiye", never "Turkey".
-2. Preserve all proper nouns (e.g., "İstanbul", "Ankara", "Recep Tayyip Erdoğan"). News articles should be written for readers who do not speak Turkish and speak English. Keep this in mind.
-3. The news body ("content_md") must contain only the rewritten article text.
-   - Exclude titles, dates, author lines, or metadata.
-   - Write in Reuters-style: concise, neutral, and fact-driven.
-   - Use Markdown formatting. Bold, italic, and other formatting should be used sparingly.
-   - Include "##" subheadings where logically needed.
-   - Keep paragraphs short (2–3 sentences).
-   - Maintain quotes accurately.
-4. Generate up to 3 tags based only on proper nouns. This field is REQUIRED and must not be empty. Include names of people, organizations, and locations mentioned in the article. Do not create tags such as “Turkey,” “Turkiye,” or “Türkiye.”
-5. Add SEO fields:
-   - "seo_title": under 60 characters. The title is very important. After creating the title, do another grammar check. 
-   - "seo_description": 120–160 characters.
-6. Never invent facts. Summarize only what is known.
+2. Write in Reuters style — concise, neutral, factual.
+3. Use Markdown for the article body.
+4. Keep paragraphs 2–3 sentences.
+5. Include "##" subheadings where needed.
+6. Do not invent facts.
 
 ---
 
-### 🧠 RESPONSE FORMAT
-Return a valid JSON object only (no markdown fences):
-
+### OUTPUT FORMAT (JSON only)
 {
-  "seo_title": "Concise, factual SEO title under 60 characters",
-  "seo_description": "Clear summary between 120–160 characters",
-  "content_md": "Rewritten English article body in Markdown, with ## subheadings where needed",
-  "tags": ["Ankara", "Baykar", "Recep Tayyip Erdoğan", "Ministry of Health"]
+  "seo_title": "English SEO title under 60 characters",
+  "seo_description": "English description (120–160 chars)",
+  "content_md": "Full rewritten English article in Markdown",
+  "tags": ["Proper names and places only, in English"]
 }
 
 ---
 
-### 📰 SOURCE ARTICLE (Turkish)
+### SOURCE ARTICLE (Turkish)
 Title: %s
 Content: %s
 
