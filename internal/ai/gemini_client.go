@@ -40,7 +40,7 @@ type geminiResponse struct {
 				Text string `json:"text"`
 			} `json:"parts"`
 		} `json:"content"`
-	} json:"candidates"
+	} `json:"candidates"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -186,8 +186,8 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 	if resp.StatusCode() >= 400 {
 		var errResp struct {
 			Error struct {
-				Message string json:"message"
-			} json:"error"
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := json.Unmarshal(resp.Body(), &errResp); err == nil && errResp.Error.Message != "" {
 			return "", fmt.Errorf("API error: %s", errResp.Error.Message)
@@ -283,11 +283,11 @@ Now, produce the JSON output following all rules exactly.
 
 func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsItem, error) {
 	var result struct {
-		SeoTitle  string   json:"seo_title"
-		SeoDesc   string   json:"seo_description"
-		ContentMD string   json:"content_md"
-		Category  string   json:"category"
-		Tags      []string json:"tags"
+		SeoTitle  string   `json:"seo_title"`
+		SeoDesc   string   `json:"seo_description"`
+		ContentMD string   `json:"content_md"`
+		Category  string   `json:"category"`
+		Tags      []string `json:"tags"`
 	}
 
 	cleanResponse := strings.TrimSpace(response)
