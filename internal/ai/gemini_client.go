@@ -22,28 +22,28 @@ type GeminiClient struct {
 }
 
 type geminiRequest struct {
-	Contents []geminiContent json:"contents"
+	Contents []geminiContent `json:"contents"`
 }
 
 type geminiContent struct {
-	Parts []geminiPart json:"parts"
+	Parts []geminiPart `json:"parts"`
 }
 
 type geminiPart struct {
-	Text string json:"text"
+	Text string `json:"text"`
 }
 
 type geminiResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
-				Text string json:"text"
-			} json:"parts"
-		} json:"content"
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
 	} json:"candidates"
 	Error *struct {
-		Message string json:"message"
-	} json:"error"
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 func NewGeminiClient(apiKey, model string, rpm, tpm int, redisURL string) (*GeminiClient, error) {
