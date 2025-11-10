@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bilgisen/goen/internal/logger"
 	"github.com/bilgisen/goen/internal/models"
@@ -255,34 +256,64 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 
 func buildPrompt(item models.FeedItem) string {
 	return fmt.Sprintf(`
-You are a professional Reuters news editor. Your task is to **translate and rewrite Turkish news entirely in English**.
+You are a *professional Reuters-style English news editor. Your task is to **translate and rewrite Turkish news entirely in English*, following strict editorial, style, and formatting rules.
 
 ---
+
 ### LANGUAGE RULES
-- The entire response **must be written in English only**. 
+- Write entirely in *English*.
 - Never use Turkish words or sentences in any field.
-- Translate all Turkish names and terms if an English equivalent exists (e.g. "Cumhurbaşkanı" → "President").
-- Preserve Turkish proper nouns as-is (e.g. "İstanbul", "Ankara", "Recep Tayyip Erdoğan").
-- Do NOT output Turkish in title, description, or content.
+- Translate all Turkish titles and terms if an English equivalent exists (e.g., "Cumhurbaşkanı" → "President").
+- Preserve proper Turkish nouns as-is (e.g., "İstanbul", "Ankara", "Recep Tayyip Erdoğan").
+- *Always use “Türkiye” instead of “Turkey” in all parts of the article, including titles, content, and subheadings.*
+- Use correct grammar and Reuters-style journalistic tone — neutral, factual, and concise.
+- Each paragraph should have *2–3 sentences*.
 
 ---
 
 ### STYLE RULES
-1. Always write "Türkiye", never "Turkey".
-2. Write in Reuters style — concise, neutral, factual.
-3. Use Markdown for the article body.
-4. Keep paragraphs 2–3 sentences.
-5. Include "##" subheadings where needed.
-6. Do not invent facts.
+- Use *Markdown* for the full article body.
+- Highlight all *nouns* in bold.
+- Write all *quotes* in italic.
+- Include "##" subheadings where relevant.
+- Do not invent or add information.
+- Keep the writing objective and report-like.
+
+---
+
+### CATEGORY SELECTION RULES
+Select *only one* category from the following list:
+["Türkiye", "Business", "World", "Technology", "Sports", "Entertainment"]
+
+- Choose "Türkiye" only if the news primarily covers domestic issues, politics, or local events.
+- Choose "Business" for finance, economy, company, or trade-related topics.
+- Choose "World" for international developments not specific to Türkiye.
+- Choose "Technology" for digital innovation, science, or tech company news.
+- Choose "Sports" for athletic or competition-related stories.
+- Choose "Entertainment" for arts, culture, or lifestyle-related content.
+- Return the category as a lowercase English word (e.g., "business", "sports").
+
+---
+
+### TAG GENERATION RULES
+Suggest *3–6 relevant tags* focusing on main topics, entities, and places mentioned in the news.
+
+- Include country names if they are relevant to the article.
+- Avoid personal initials, honorifics (Mr., Dr., etc.), or media outlets.
+- Use concise one- or two-word tags (e.g., "Economy", "Recep Tayyip Erdoğan", "Artificial Intelligence").
+- Do not repeat generic tags such as "News" or "Update".
 
 ---
 
 ### OUTPUT FORMAT (JSON only)
+Return *strictly valid JSON* with the following structure:
+
 {
+  "category": "business",
   "seo_title": "English SEO title under 60 characters",
   "seo_description": "English description (120–160 chars)",
-  "content_md": "Full rewritten English article in Markdown",
-  "tags": ["Proper names and places only, in English"]
+  "content_md": "Full rewritten English article in Markdown (with *bold* nouns and italic quotes)",
+  "tags": ["Economy", "Recep Tayyip Erdoğan", "Trade Relations"]
 }
 
 ---
@@ -298,32 +329,88 @@ Now produce the JSON output following all rules exactly.
 
 func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsItem, error) {
 	var result struct {
-		SeoTitle    string   `json:"seo_title"`
-		SeoDesc     string   `json:"seo_description"`
-		ContentMD   string   `json:"content_md"`
-		Tags        []string `json:"tags"`
+		Category   string   `json:"category"`
+		SeoTitle   string   `json:"seo_title"`
+		SeoDesc    string   `json:"seo_description"`
+		ContentMD  string   `json:"content_md"`
+		Tags       []string `json:"tags"`
 	}
 
-	// Clean the response (sometimes Gemini adds markdown code blocks)
+	// Clean Gemini's JSON output from markdown code blocks and non-breaking spaces
 	cleanResponse := strings.TrimSpace(response)
+	
+	// Handle ```json ... ``` format
 	if strings.HasPrefix(cleanResponse, "```json") {
-		cleanResponse = strings.TrimPrefix(cleanResponse, "```json\n")
-		cleanResponse = strings.TrimSuffix(cleanResponse, "\n```")
+		// Remove the opening ```json and closing ```
+		cleanResponse = strings.TrimPrefix(cleanResponse, "```json")
+		cleanResponse = strings.TrimSuffix(cleanResponse, "```")
+	} else if strings.HasPrefix(cleanResponse, "```") {
+		// Handle case where it's just ``` ... ```
+		cleanResponse = strings.TrimPrefix(cleanResponse, "```")
+		cleanResponse = strings.TrimSuffix(cleanResponse, "```")
+	}
+	
+	// Clean any remaining whitespace and newlines
+	cleanResponse = strings.TrimSpace(cleanResponse)
+	
+	// If the response still starts with "json" (some Gemini versions do this)
+	if strings.HasPrefix(cleanResponse, "json") {
+		cleanResponse = strings.TrimSpace(strings.TrimPrefix(cleanResponse, "json"))
 	}
 
+	// Replace non-breaking spaces with regular spaces
+	cleanResponse = strings.ReplaceAll(cleanResponse, "\u00A0", " ")
+	cleanResponse = strings.ReplaceAll(cleanResponse, " ", " ") // Non-breaking space in different format
+
+	// Clean up any other potential invisible characters
+	cleanResponse = strings.Map(func(r rune) rune {
+		if r == '\u00A0' || r == '\u200B' {
+			return ' ' // Replace with space
+		}
+		if unicode.IsSpace(r) && r != ' ' && r != '\n' && r != '\t' {
+			return ' ' // Replace other unusual spaces with regular space
+		}
+		return r
+	}, cleanResponse)
+
+	// Remove any double spaces that might have been created
+	for strings.Contains(cleanResponse, "  ") {
+		cleanResponse = strings.ReplaceAll(cleanResponse, "  ", " ")
+	}
+
+	// Handle markdown bold syntax in JSON content
+	// Replace "**word**" with "word" to prevent JSON parsing issues
+	// This is a temporary workaround - in a production environment, consider using a proper markdown parser
+	cleanResponse = strings.ReplaceAll(cleanResponse, "**", "")
+
+	// Also handle single asterisks used for emphasis
+	cleanResponse = strings.ReplaceAll(cleanResponse, "*", "")
+
+	// Try to decode JSON
 	if err := json.Unmarshal([]byte(cleanResponse), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w\nResponse: %s", err, cleanResponse)
+		return nil, fmt.Errorf("failed to parse Gemini JSON: %w\nResponse: %s", err, cleanResponse)
 	}
 
-	// Ensure tags is never nil
+	// Validate minimal required fields
+	if result.SeoTitle == "" || result.ContentMD == "" {
+		return nil, fmt.Errorf("missing required fields in Gemini output")
+	}
+
+	// Use AI-detected category if available; otherwise fallback to feed's category
+	category := strings.TrimSpace(result.Category)
+	if category == "" {
+		category = item.Category
+	}
+
+	// Ensure tag array always exists
 	tags := make([]string, 0)
 	if result.Tags != nil {
 		tags = result.Tags
 	}
 
-	// Validate that we have the required number of tags
-	if len(tags) < 3 {  // Require at least 3 tags
-		return nil, fmt.Errorf("insufficient tags generated: expected at least 3, got %d", len(tags))
+	// Basic tag sanity check (you can relax or strengthen this)
+	if len(tags) == 0 {
+		tags = []string{"General"}
 	}
 
 	// Create and return the news item
@@ -333,7 +420,7 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		SeoTitle:    result.SeoTitle,
 		SeoDesc:     result.SeoDesc,
 		ContentMD:   result.ContentMD,
-		Category:    item.Category, // Use category from smart feed extraction
+		Category:    category,
 		Tags:        tags,
 		Image:       item.Image,
 		OriginalUrl: item.Url,
