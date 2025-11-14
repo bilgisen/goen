@@ -17,4 +17,5 @@ type NewsItem struct {
 	CreatedAt    time.Time `json:"created_at"`
 	PublishedAt  time.Time `json:"published_at,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	Featured     *bool     `json:"featured,omitempty"` // Pointer to bool to properly handle null/true/false
 }

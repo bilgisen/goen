@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bilgisen/goen/internal/ai"
@@ -11,6 +13,7 @@ import (
 	"github.com/bilgisen/goen/internal/config"
 	"github.com/bilgisen/goen/internal/feed"
 	"github.com/bilgisen/goen/internal/logger"
+	"github.com/bilgisen/goen/internal/models"
 	"github.com/bilgisen/goen/internal/storage"
 	"github.com/gofiber/fiber/v2"
 )
@@ -114,29 +117,71 @@ func (h *Handlers) GetNews(c *fiber.Ctx) error {
 		page = 1
 	}
 
-	pageSize, _ := strconv.Atoi(c.Query("page_size", "20"))
+	pageSize, _ := strconv.Atoi(c.Query("page_size", "10"))
 	switch {
 	case pageSize > 100:
 		pageSize = 100
 	case pageSize <= 0:
-		pageSize = 20
+		pageSize = 10
 	}
 
-	// Get news from storage
-	news, err := h.storage.ListNews(page, pageSize)
-	if err != nil {
-		logger.Get().Error().Err(err).Msg("Error getting news")
+	// Create a context with timeout (increase to 30s due to R2 listing/fetch latency)
+	ctx, cancel := context.WithTimeout(c.Context(), 30*time.Second)
+	defer cancel()
+
+	// Create channels for the result
+	resultChan := make(chan []*models.NewsItem, 1)
+	errChan := make(chan error, 1)
+
+	// Run the storage operation in a goroutine
+	go func() {
+		items, err := h.storage.ListNews(ctx, page, pageSize)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		resultChan <- items
+	}()
+
+	// Wait for either the result, an error, or a timeout
+	select {
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return c.Status(fiber.StatusRequestTimeout).JSON(fiber.Map{
+				"error": "Request timed out",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to get news",
+			"error": "Request cancelled",
+		})
+	case err := <-errChan:
+		if err != nil {
+			// On storage error, return an empty list instead of 500 to keep API responsive
+			logger.Get().Warn().Err(err).Msg("ListNews error - returning empty list")
+			return c.JSON(fiber.Map{
+				"page":       page,
+				"page_size":  pageSize,
+				"total":      0,
+				"items":      []*models.NewsItem{},
+			})
+		}
+	case news := <-resultChan:
+		// Ensure featured is never nil for API response
+		for _, it := range news {
+			if it != nil && it.Featured == nil {
+				def := false
+				it.Featured = &def
+			}
+		}
+		return c.JSON(fiber.Map{
+			"page":       page,
+			"page_size":  pageSize,
+			"total":      len(news),
+			"items":      news,
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"page":       page,
-		"page_size":  pageSize,
-		"total":      len(news),
-		"items":      news,
-	})
+	return nil
 }
 
 // GetNewsByID handles GET /api/news/:id
@@ -148,15 +193,52 @@ func (h *Handlers) GetNewsByID(c *fiber.Ctx) error {
 		})
 	}
 
-	news, err := h.storage.GetNewsByID(id)
-	if err != nil {
-		logger.Get().Error().Err(err).Str("id", id).Msg("Error getting news item")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "News not found",
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	// Create channels for the result
+	resultChan := make(chan *models.NewsItem, 1)
+	errChan := make(chan error, 1)
+
+	// Run the storage operation in a goroutine
+	go func() {
+		item, err := h.storage.GetNewsByID(ctx, id)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		resultChan <- item
+	}()
+
+	// Wait for either the result, an error, or a timeout
+	select {
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return c.Status(fiber.StatusRequestTimeout).JSON(fiber.Map{
+				"error": "Request timed out",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Request cancelled",
 		})
+	case err := <-errChan:
+		if err != nil {
+			logger.Get().Error().Err(err).Str("id", id).Msg("Error getting news item")
+			if strings.Contains(err.Error(), "not found") {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "News not found",
+				})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to get news item",
+			})
+		}
+	case item := <-resultChan:
+		return c.JSON(item)
 	}
 
-	return c.JSON(news)
+	return nil
 }
 
 // ProcessFeedsExternal handles POST /api/v1/external/process
@@ -269,7 +351,7 @@ func (h *Handlers) ProcessFeedsExternal(c *fiber.Ctx) error {
 				}
 
 				// Save the processed item to storage
-				if err := h.storage.SaveNews(newsItem); err != nil {
+				if err := h.storage.SaveNews(ctx, newsItem); err != nil {
 					log.Error().
 						Err(err).
 						Str("id", newsItem.ID).
@@ -427,7 +509,7 @@ func (h *Handlers) ProcessFeeds(c *fiber.Ctx) error {
 
 				// Save the processed item to primary storage (R2 or file)
 				if h.storage != nil {
-					if err := h.storage.SaveNews(newsItem); err != nil {
+					if err := h.storage.SaveNews(ctx, newsItem); err != nil {
 						log.Error().
 							Err(err).
 							Str("id", newsItem.ID).
@@ -473,7 +555,9 @@ func (h *Handlers) DebugListAllNews(c *fiber.Ctx) error {
 	log := logger.Get()
 	
 	// Use a large page size to get all items
-	items, err := h.storage.ListNews(1, 1000) // Get up to 1000 items from the first page
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+	items, err := h.storage.ListNews(ctx, 1, 1000) // Get up to 1000 items from the first page
 	if err != nil {
 		log.Error().
 			Err(err).
@@ -524,7 +608,10 @@ func (h *Handlers) DeleteNews(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.storage.DeleteNews(id); err != nil {
+	// Use context with timeout for delete operation
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+	if err := h.storage.DeleteNews(ctx, id); err != nil {
 		logger.Get().Error().Err(err).Str("id", id).Msg("Error getting news item")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to get news item",

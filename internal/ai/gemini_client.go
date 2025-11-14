@@ -255,8 +255,7 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 }
 
 func buildPrompt(item models.FeedItem) string {
-	return fmt.Sprintf(`
-You are a *professional Reuters-style English news editor. Your task is to **translate and rewrite Turkish news entirely in English*, following strict editorial, style, and formatting rules.
+	return fmt.Sprintf(`You are a *professional Reuters-style English news editor. Your task is to **translate and rewrite Turkish news entirely in English*, following strict editorial, style, and formatting rules.
 
 ---
 
@@ -313,8 +312,21 @@ Return *strictly valid JSON* with the following structure:
   "seo_title": "English SEO title under 60 characters",
   "seo_description": "English description (120–160 chars)",
   "content_md": "Full rewritten English article in Markdown (with *bold* nouns and italic quotes)",
-  "tags": ["Economy", "Recep Tayyip Erdoğan", "Trade Relations"]
+  "tags": ["Economy", "Recep Tayyip Erdoğan", "Trade Relations"],
+  "featured": false
 }
+
+### FEATURED NEWS CRITERIA
+Mark a news item as 'featured: true' if it meets ANY of these criteria:
+- Major breaking news with significant impact
+- Important political or economic developments
+- Major international events affecting Türkiye
+- Exclusive or investigative reports
+- High-profile interviews or announcements
+- Major sports achievements or events
+- Significant technological breakthroughs
+
+Otherwise, keep it as 'featured: false'.
 
 ---
 
@@ -334,6 +346,7 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		SeoDesc    string   `json:"seo_description"`
 		ContentMD  string   `json:"content_md"`
 		Tags       []string `json:"tags"`
+		Featured   bool     `json:"featured"`
 	}
 
 	// Clean Gemini's JSON output from markdown code blocks and non-breaking spaces
@@ -396,11 +409,17 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		return nil, fmt.Errorf("missing required fields in Gemini output")
 	}
 
-	// Use AI-detected category if available; otherwise fallback to feed's category
-	category := strings.TrimSpace(result.Category)
-	if category == "" {
-		category = item.Category
-	}
+    // Use AI-detected category if available; otherwise fallback to feed's category
+    category := strings.TrimSpace(result.Category)
+    if category == "" {
+        category = item.Category
+    }
+    // Normalize category: enforce lowercase and convert Türkiye variants to 'turkiye'
+    if strings.EqualFold(category, "Türkiye") || strings.EqualFold(category, "türkiye") {
+        category = "turkiye"
+    } else {
+        category = strings.ToLower(category)
+    }
 
 	// Ensure tag array always exists
 	tags := make([]string, 0)
@@ -424,6 +443,7 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		Tags:        tags,
 		Image:       item.Image,
 		OriginalUrl: item.Url,
+		Featured:    &result.Featured,
 		CreatedAt:   time.Now(),
 	}, nil
 }

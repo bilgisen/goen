@@ -113,10 +113,32 @@ func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem,
 			Msg("Failed to wake up Render service, continuing with fetch")
 	}
 
-	resp, err := f.client.R().
-		SetContext(ctx).
-		SetHeader("Accept", "application/json").
-		Get(url)
+	var resp *resty.Response
+	var err error
+	attempts := 5
+	wait := time.Second
+	for i := 1; i <= attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		resp, err = f.client.R().
+			SetContext(ctx).
+			SetHeader("Accept", "application/json").
+			Get(url)
+		if err == nil && resp.StatusCode() == http.StatusOK {
+			break
+		}
+
+		if i < attempts {
+			time.Sleep(wait)
+			if wait < 8*time.Second {
+				wait *= 2
+			}
+		}
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch feed from %s: %w", url, err)
