@@ -28,6 +28,60 @@ type Storage interface {
 	Close() error
 }
 
+// PurgeProcessed deletes all objects under the "processed/" prefix.
+// This is a destructive operation meant for one-time cleanups.
+func (r *R2Storage) PurgeProcessed(ctx context.Context) error {
+    prefix := "processed/"
+
+    var token *string
+    for {
+        // short timeout per list call
+        listCtx, listCancel := context.WithTimeout(ctx, 8*time.Second)
+        out, err := r.s3Client.ListObjectsV2(listCtx, &s3.ListObjectsV2Input{
+            Bucket:            aws.String(r.bucket),
+            Prefix:            aws.String(prefix),
+            ContinuationToken: token,
+            MaxKeys:           aws.Int32(1000),
+        })
+        listCancel()
+        if err != nil {
+            return fmt.Errorf("list objects failed: %w", err)
+        }
+
+        if len(out.Contents) == 0 {
+            if !aws.ToBool(out.IsTruncated) {
+                break
+            }
+            token = out.NextContinuationToken
+            continue
+        }
+
+        // Build delete identifiers in batches (R2/S3 supports up to 1000 per request)
+        ids := make([]types.ObjectIdentifier, 0, len(out.Contents))
+        for _, obj := range out.Contents {
+            ids = append(ids, types.ObjectIdentifier{Key: obj.Key})
+        }
+
+        // short timeout per delete call
+        delCtx, delCancel := context.WithTimeout(ctx, 10*time.Second)
+        _, err = r.s3Client.DeleteObjects(delCtx, &s3.DeleteObjectsInput{
+            Bucket: aws.String(r.bucket),
+            Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)},
+        })
+        delCancel()
+        if err != nil {
+            return fmt.Errorf("delete objects failed: %w", err)
+        }
+
+        if !aws.ToBool(out.IsTruncated) {
+            break
+        }
+        token = out.NextContinuationToken
+    }
+
+    return nil
+}
+
 // FileStorage implements Storage interface using local filesystem
 type FileStorage struct {
 	basePath string
@@ -313,6 +367,36 @@ func (s *FileStorage) DeleteNews(ctx context.Context, id string) error { // Adde
 func (s *FileStorage) Close() error {
 	// Filesystem operations don't require explicit cleanup
 	return nil
+}
+
+// PurgeProcessedLocal deletes all JSON files under the local processed/ directory.
+// Destructive; use cautiously.
+func (s *FileStorage) PurgeProcessedLocal(ctx context.Context) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    processedPath := s.basePath
+    if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+        processedPath = filepath.Join(s.basePath, "processed")
+    }
+
+    return filepath.Walk(processedPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        if ctx.Err() != nil {
+            return ctx.Err()
+        }
+        if info.IsDir() {
+            return nil
+        }
+        if strings.HasSuffix(info.Name(), ".json") {
+            if remErr := os.Remove(path); remErr != nil {
+                return fmt.Errorf("failed removing %s: %w", path, remErr)
+            }
+        }
+        return nil
+    })
 }
 
 type R2Storage struct {
@@ -636,4 +720,27 @@ func (r *R2Storage) DeleteNews(ctx context.Context, id string) error { // Added 
 func (r *R2Storage) Close() error {
 	// No explicit cleanup needed for S3 client
 	return nil
+}
+
+// EnsureProcessedExpiry configures lifecycle to expire processed/ objects after the given number of days.
+func (r *R2Storage) EnsureProcessedExpiry(ctx context.Context, days int32) error {
+    rule := types.LifecycleRule{
+        ID:     aws.String("expire-processed"),
+        Status: types.ExpirationStatusEnabled,
+        Filter: &types.LifecycleRuleFilter{Prefix: aws.String("processed/")},
+        Expiration: &types.LifecycleExpiration{
+            Days: aws.Int32(days),
+        },
+    }
+
+    _, err := r.s3Client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+        Bucket: aws.String(r.bucket),
+        LifecycleConfiguration: &types.BucketLifecycleConfiguration{
+            Rules: []types.LifecycleRule{rule},
+        },
+    })
+    if err != nil {
+        return fmt.Errorf("failed to set lifecycle configuration: %w", err)
+    }
+    return nil
 }
