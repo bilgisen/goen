@@ -96,6 +96,7 @@ type JSONFeed struct {
 		Description string `json:"description"`
 		Content     string `json:"content"`
 		Image       string `json:"image"`
+		Category    string `json:"category,omitempty"` // Added category field
 	} `json:"items"`
 	ItemsReturned int `json:"items_returned"`
 	ItemsSkipped  int `json:"items_skipped"`
@@ -166,7 +167,7 @@ func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem,
 				ContentTR: item.Content,
 				Image:     item.Image,
 				Url:       item.Link,
-				Category:  "", // Will be set by smart category extraction in parser
+				Category:  item.Category, // Use the category from the feed
 			})
 		}
 		return items, nil
@@ -180,8 +181,7 @@ func (f *Fetcher) FetchFeed(ctx context.Context, url string) ([]models.FeedItem,
 		if singleErr := json.Unmarshal(resp.Body(), &singleItem); singleErr != nil {
 			return nil, fmt.Errorf("failed to parse feed response: %w (tried both JSON feed and array formats)", err)
 		}
-		// Reset category so parser can do smart extraction
-		singleItem.Category = ""
+		// Category will be used as is from the feed
 		items = []models.FeedItem{singleItem}
 	}
 

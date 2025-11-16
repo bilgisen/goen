@@ -102,10 +102,13 @@ func Load() *Config {
 		AIModel:     viper.GetString("AI_MODEL"),
 		AITimeout:   viper.GetInt("AI_TIMEOUT"),
 		AIMaxTokens: viper.GetInt("AI_MAX_TOKENS"),
+		AIRateLimit: viper.GetInt("AI_RATE_LIMIT"),
+		AITPMLimit:  viper.GetInt("AI_TPM_LIMIT"),
 
 		// Storage
 		StoragePath:    viper.GetString("STORAGE_PATH"),
 		FeedSourcePath: viper.GetString("FEED_SOURCE_PATH"),
+		FeedURLs:       viper.GetStringSlice("FEED_URLS"),
 		ProcessedPath:  viper.GetString("PROCESSED_PATH"),
 		RetentionDays:  viper.GetInt("RETENTION_DAYS"),
 		MaxFileSize:    viper.GetInt64("MAX_FILE_SIZE"),
@@ -122,7 +125,8 @@ func Load() *Config {
 		LogFile:  viper.GetString("LOG_FILE"),
 
 		// Security
-		AdminAPIKey: viper.GetString("ADMIN_API_KEY"),
+		AdminAPIKey:    viper.GetString("ADMIN_API_KEY"),
+		ExternalApiKey: viper.GetString("EXTERNAL_API_KEY"),
 	}
 
 	// Apply defaults if values are empty
