@@ -534,8 +534,8 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
 
     var collected []types.Object
 
-    // Look back only today to minimize listing cost
-    daysToScan := 1
+    // Look back last 7 days to balance freshness with listing cost
+    daysToScan := 7
     today := time.Now()
 
     for i := 0; i < daysToScan; i++ {

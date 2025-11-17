@@ -447,16 +447,29 @@ func buildNewsItemFromResult(res interface{}, item models.FeedItem) *models.News
 	tagsToStrip := map[string]bool{
 		"türkiye": true, "turkiye": true, "turkey": true,
 	}
+	// Stop-word filter for overly generic tags
+	stopWords := map[string]bool{
+		"news": true, "update": true, "updates": true,
+		"breaking": true, "latest": true, "general": true,
+	}
 	var finalTags []string
 	for _, t := range r.Tags {
 		tt := strings.TrimSpace(t)
 		if tt == "" {
 			continue
 		}
-		if _, ok := tagsToStrip[strings.ToLower(tt)]; ok {
+		lower := strings.ToLower(tt)
+		if tagsToStrip[lower] {
+			continue
+		}
+		if stopWords[lower] {
 			continue
 		}
 		finalTags = append(finalTags, tt)
+	}
+	// Limit to at most 3 tags
+	if len(finalTags) > 3 {
+		finalTags = finalTags[:3]
 	}
 	if len(finalTags) == 0 {
 		finalTags = []string{"General"}
@@ -531,7 +544,6 @@ Write a full English news article based on the Turkish source.
 - Markdown rules:
   - Use "##" subheadings where appropriate.
   - Use *italic* formatting for all quotes.
-  - Never use bold formatting.
   - Do NOT add a main title.
 
 ---
@@ -542,16 +554,19 @@ Generate:
 
 - seo_title: under 60 chars
 - seo_description: 120–160 chars
-- tags: 3–5 topic tags (Title Case)
-- peoples: list notable people or []
+- tags: 1–3 topic/sub-category keywords (Title Case)
+- peoples: list clearly notable people only, or []
 - locations: list countries/cities or []
-- organizations: list orgs or []
+- organizations: list institutions, companies and brands or []
 - featured: true/false
 
 Rules:
 * DO NOT add any information not explicitly present in the Turkish source.
-* Do NOT infer roles or backgrounds (e.g., "former president") unless the source explicitly states them.
-* NEVER set featured to true by default. Only set to true when the article describes:
+* Do NOT infer roles or backgrounds (e.g., "former president Trump") unless the source explicitly states them.
+* peoples: include only well-known or clearly important public figures mentioned by full name. EXCLUDE generic/private individuals and any anonymised/initial-based mentions such as "Z.D." or "M.K.".
+* organizations: include institutions (e.g. UN), companies (e.g. Alphabet) and brands (e.g. Google). Use common abbreviations for institutions when they exist (e.g. UN instead of United Nations). Do NOT put persons or locations here.
+* tags: must describe what the article is about as high-level topics or sub-categories (e.g. "Climate Change", "Elections", "Monetary Policy", "Technology Regulation"). Do NOT repeat peoples, organizations or locations as tags; do not use person names or place names as tags.
+* NEVER set featured to true by default. Set featured: true only when the article clearly describes one of the following and is significantly important compared to an ordinary daily news item:
   - a major political event with nationwide or international consequences
   - a large-scale disaster or accident
   - a significant economic development affecting markets or many people
