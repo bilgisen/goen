@@ -147,10 +147,18 @@ func (h *Handlers) GetNews(c *fiber.Ctx) error {
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Set no-cache headers
+			c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			c.Set("Pragma", "no-cache")
+			c.Set("Expires", "0")
 			return c.Status(fiber.StatusRequestTimeout).JSON(fiber.Map{
 				"error": "Request timed out",
 			})
 		}
+		// Set no-cache headers
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		c.Set("Pragma", "no-cache")
+		c.Set("Expires", "0")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Request cancelled",
 		})
@@ -158,6 +166,10 @@ func (h *Handlers) GetNews(c *fiber.Ctx) error {
 		if err != nil {
 			// On storage error, return an empty list instead of 500 to keep API responsive
 			logger.Get().Warn().Err(err).Msg("ListNews error - returning empty list")
+			// Set no-cache headers
+			c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			c.Set("Pragma", "no-cache")
+			c.Set("Expires", "0")
 			return c.JSON(fiber.Map{
 				"page":       page,
 				"page_size":  pageSize,
@@ -173,6 +185,10 @@ func (h *Handlers) GetNews(c *fiber.Ctx) error {
 				it.Featured = &def
 			}
 		}
+		// Set no-cache headers
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		c.Set("Pragma", "no-cache")
+		c.Set("Expires", "0")
 		return c.JSON(fiber.Map{
 			"page":       page,
 			"page_size":  pageSize,

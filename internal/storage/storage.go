@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,55 +32,55 @@ type Storage interface {
 // PurgeProcessed deletes all objects under the "processed/" prefix.
 // This is a destructive operation meant for one-time cleanups.
 func (r *R2Storage) PurgeProcessed(ctx context.Context) error {
-    prefix := "processed/"
+	prefix := "processed/"
 
-    var token *string
-    for {
-        // short timeout per list call
-        listCtx, listCancel := context.WithTimeout(ctx, 8*time.Second)
-        out, err := r.s3Client.ListObjectsV2(listCtx, &s3.ListObjectsV2Input{
-            Bucket:            aws.String(r.bucket),
-            Prefix:            aws.String(prefix),
-            ContinuationToken: token,
-            MaxKeys:           aws.Int32(1000),
-        })
-        listCancel()
-        if err != nil {
-            return fmt.Errorf("list objects failed: %w", err)
-        }
+	var token *string
+	for {
+		// short timeout per list call
+		listCtx, listCancel := context.WithTimeout(ctx, 8*time.Second)
+		out, err := r.s3Client.ListObjectsV2(listCtx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(r.bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: token,
+			MaxKeys:           aws.Int32(1000),
+		})
+		listCancel()
+		if err != nil {
+			return fmt.Errorf("list objects failed: %w", err)
+		}
 
-        if len(out.Contents) == 0 {
-            if !aws.ToBool(out.IsTruncated) {
-                break
-            }
-            token = out.NextContinuationToken
-            continue
-        }
+		if len(out.Contents) == 0 {
+			if !aws.ToBool(out.IsTruncated) {
+				break
+			}
+			token = out.NextContinuationToken
+			continue
+		}
 
-        // Build delete identifiers in batches (R2/S3 supports up to 1000 per request)
-        ids := make([]types.ObjectIdentifier, 0, len(out.Contents))
-        for _, obj := range out.Contents {
-            ids = append(ids, types.ObjectIdentifier{Key: obj.Key})
-        }
+		// Build delete identifiers in batches (R2/S3 supports up to 1000 per request)
+		ids := make([]types.ObjectIdentifier, 0, len(out.Contents))
+		for _, obj := range out.Contents {
+			ids = append(ids, types.ObjectIdentifier{Key: obj.Key})
+		}
 
-        // short timeout per delete call
-        delCtx, delCancel := context.WithTimeout(ctx, 10*time.Second)
-        _, err = r.s3Client.DeleteObjects(delCtx, &s3.DeleteObjectsInput{
-            Bucket: aws.String(r.bucket),
-            Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)},
-        })
-        delCancel()
-        if err != nil {
-            return fmt.Errorf("delete objects failed: %w", err)
-        }
+		// short timeout per delete call
+		delCtx, delCancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err = r.s3Client.DeleteObjects(delCtx, &s3.DeleteObjectsInput{
+			Bucket: aws.String(r.bucket),
+			Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)},
+		})
+		delCancel()
+		if err != nil {
+			return fmt.Errorf("delete objects failed: %w", err)
+		}
 
-        if !aws.ToBool(out.IsTruncated) {
-            break
-        }
-        token = out.NextContinuationToken
-    }
+		if !aws.ToBool(out.IsTruncated) {
+			break
+		}
+		token = out.NextContinuationToken
+	}
 
-    return nil
+	return nil
 }
 
 // FileStorage implements Storage interface using local filesystem
@@ -154,191 +155,208 @@ func (s *FileStorage) SaveNews(ctx context.Context, item *models.NewsItem) error
 
 // GetNewsByID retrieves a news item by its ID
 func (s *FileStorage) GetNewsByID(ctx context.Context, id string) (*models.NewsItem, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    // First, try to find the file directly by ID
-    processedPath := s.basePath
-    if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
-        processedPath = filepath.Join(s.basePath, "processed")
-    }
+	// First, try to find the file directly by ID
+	processedPath := s.basePath
+	if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+		processedPath = filepath.Join(s.basePath, "processed")
+	}
 
-    // Look for the file in all date-based subdirectories
-    yearDirs, err := os.ReadDir(processedPath)
-    if err != nil {
-        return nil, fmt.Errorf("error reading directory %s: %w", processedPath, err)
-    }
+	// Look for the file in all date-based subdirectories
+	yearDirs, err := os.ReadDir(processedPath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading directory %s: %w", processedPath, err)
+	}
 
-    for _, yearDir := range yearDirs {
-        if ctx.Err() != nil {
-            return nil, ctx.Err()
-        }
+	for _, yearDir := range yearDirs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 
-        if !yearDir.IsDir() {
-            continue
-        }
+		if !yearDir.IsDir() {
+			continue
+		}
 
-        monthDirs, err := os.ReadDir(filepath.Join(processedPath, yearDir.Name()))
-        if err != nil {
-            continue
-        }
+		monthDirs, err := os.ReadDir(filepath.Join(processedPath, yearDir.Name()))
+		if err != nil {
+			continue
+		}
 
-        for _, monthDir := range monthDirs {
-            if ctx.Err() != nil {
-                return nil, ctx.Err()
-            }
+		for _, monthDir := range monthDirs {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 
-            if !monthDir.IsDir() {
-                continue
-            }
+			if !monthDir.IsDir() {
+				continue
+			}
 
-            dayDirs, err := os.ReadDir(filepath.Join(processedPath, yearDir.Name(), monthDir.Name()))
-            if err != nil {
-                continue
-            }
+			dayDirs, err := os.ReadDir(filepath.Join(processedPath, yearDir.Name(), monthDir.Name()))
+			if err != nil {
+				continue
+			}
 
-            for _, dayDir := range dayDirs {
-                if ctx.Err() != nil {
-                    return nil, ctx.Err()
-                }
+			for _, dayDir := range dayDirs {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 
-                if !dayDir.IsDir() {
-                    continue
-                }
+				if !dayDir.IsDir() {
+					continue
+				}
 
-                // Look for files in the day directory
-                files, err := os.ReadDir(filepath.Join(processedPath, yearDir.Name(), monthDir.Name(), dayDir.Name()))
-                if err != nil {
-                    continue
-                }
+				// Look for files in the day directory
+				files, err := os.ReadDir(filepath.Join(processedPath, yearDir.Name(), monthDir.Name(), dayDir.Name()))
+				if err != nil {
+					continue
+				}
 
-                for _, file := range files {
-                    if !file.IsDir() && strings.Contains(file.Name(), id) && strings.HasSuffix(file.Name(), ".json") {
-                        filePath := filepath.Join(processedPath, yearDir.Name(), monthDir.Name(), dayDir.Name(), file.Name())
-                        data, err := os.ReadFile(filePath)
-                        if err != nil {
-                            return nil, fmt.Errorf("error reading file %s: %w", filePath, err)
-                        }
+				for _, file := range files {
+					if !file.IsDir() && strings.Contains(file.Name(), id) && strings.HasSuffix(file.Name(), ".json") {
+						filePath := filepath.Join(processedPath, yearDir.Name(), monthDir.Name(), dayDir.Name(), file.Name())
+						data, err := os.ReadFile(filePath)
+						if err != nil {
+							return nil, fmt.Errorf("error reading file %s: %w", filePath, err)
+						}
 
-                        var item models.NewsItem
-                        if err := json.Unmarshal(data, &item); err != nil {
-                            return nil, fmt.Errorf("error unmarshaling news item: %w", err)
-                        }
+						var item models.NewsItem
+						if err := json.Unmarshal(data, &item); err != nil {
+							return nil, fmt.Errorf("error unmarshaling news item: %w", err)
+						}
 
-                        // Default featured to false when missing in older records
-                        if item.Featured == nil {
-                            def := false
-                            item.Featured = &def
-                        }
+						// Default featured to false when missing in older records
+						if item.Featured == nil {
+							def := false
+							item.Featured = &def
+						}
 
-                        item.FilePath = filePath
-                        return &item, nil
-                    }
-                }
-            }
-        }
-    }
+						item.FilePath = filePath
+						return &item, nil
+					}
+				}
+			}
+		}
+	}
 
-    return nil, fmt.Errorf("news item with ID %s not found", id)
+	return nil, fmt.Errorf("news item with ID %s not found", id)
 }
 
 // ListNews retrieves a paginated list of news items
 func (s *FileStorage) ListNews(ctx context.Context, page, pageSize int) ([]*models.NewsItem, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    var newsItems []*models.NewsItem
-    processedPath := s.basePath
-    if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
-        processedPath = filepath.Join(s.basePath, "processed")
-    }
+	var newsItems []*models.NewsItem
+	processedPath := s.basePath
+	if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+		processedPath = filepath.Join(s.basePath, "processed")
+	}
 
-    if page < 1 {
-        page = 1
-    }
-    if pageSize <= 0 {
-        pageSize = 20
-    }
-    if pageSize > 100 {
-        pageSize = 100
-    }
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
 
-    // Check if context is done
-    if ctx.Err() != nil {
-        return nil, ctx.Err()
-    }
+	// Check if context is done
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
-    // Collect JSON files only from recent date folders (last 3 days)
-    var files []string
-    daysToScan := 3
-    today := time.Now()
-    for i := 0; i < daysToScan; i++ {
-        if ctx.Err() != nil {
-            return nil, ctx.Err()
-        }
-        dayPath := filepath.Join(processedPath, today.AddDate(0, 0, -i).Format("2006/01/02"))
-        entries, err := os.ReadDir(dayPath)
-        if err != nil {
-            continue
-        }
-        for _, e := range entries {
-            if e.IsDir() {
-                continue
-            }
-            name := e.Name()
-            if strings.HasSuffix(name, ".json") {
-                files = append(files, filepath.Join(dayPath, name))
-            }
-        }
-        // Stop early if we already have enough candidates
-        if len(files) >= page*pageSize*2 {
-            break
-        }
-    }
+	// Collect JSON files only from recent date folders (last 7 days)
+	var files []string
+	daysToScan := 7
+	candidatesCap := 1000
+	today := time.Now()
+	for i := 0; i < daysToScan; i++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		dayPath := filepath.Join(processedPath, today.AddDate(0, 0, -i).Format("2006/01/02"))
+		entries, err := os.ReadDir(dayPath)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.HasSuffix(name, ".json") {
+				files = append(files, filepath.Join(dayPath, name))
+				if len(files) >= candidatesCap {
+					break
+				}
+			}
+		}
+		if len(files) >= candidatesCap {
+			break
+		}
+	}
 
-    // Sort by modification time (newest first)
-    sort.Slice(files, func(i, j int) bool {
-        info1, _ := os.Stat(files[i])
-        info2, _ := os.Stat(files[j])
-        return info1.ModTime().After(info2.ModTime())
-    })
+	// Sort deterministically by epoch prefix in filename when available; fallback to modtime
+	parseEpoch := func(p string) int64 {
+		base := filepath.Base(p)
+		parts := strings.SplitN(base, "_", 2)
+		if len(parts) > 1 {
+			if n, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+				return n
+			}
+		}
+		return 0
+	}
+	sort.Slice(files, func(i, j int) bool {
+		ei, ej := parseEpoch(files[i]), parseEpoch(files[j])
+		if ei != 0 && ej != 0 {
+			return ei > ej
+		}
+		info1, _ := os.Stat(files[i])
+		info2, _ := os.Stat(files[j])
+		return info1.ModTime().After(info2.ModTime())
+	})
 
-    // Apply pagination
-    start := (page - 1) * pageSize
-    if start >= len(files) {
-        return []*models.NewsItem{}, nil
-    }
-    end := start + pageSize
-    if end > len(files) {
-        end = len(files)
-    }
+	// Apply pagination
+	start := (page - 1) * pageSize
+	if start >= len(files) {
+		return []*models.NewsItem{}, nil
+	}
+	end := start + pageSize
+	if end > len(files) {
+		end = len(files)
+	}
 
-    // Read and unmarshal the files
-    for _, file := range files[start:end] {
-        if ctx.Err() != nil {
-            return newsItems, ctx.Err()
-        }
-        data, err := os.ReadFile(file)
-        if err != nil {
-            return nil, fmt.Errorf("error reading file %s: %w", file, err)
-        }
+	// Read and unmarshal the files
+	for _, file := range files[start:end] {
+		if ctx.Err() != nil {
+			return newsItems, ctx.Err()
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("error reading file %s: %w", file, err)
+		}
 
-        var item models.NewsItem
-        if err := json.Unmarshal(data, &item); err != nil {
-            return nil, fmt.Errorf("error unmarshaling news item: %w", err)
-        }
+		var item models.NewsItem
+		if err := json.Unmarshal(data, &item); err != nil {
+			return nil, fmt.Errorf("error unmarshaling news item: %w", err)
+		}
 
-        // Default featured to false when missing in older records
-        if item.Featured == nil {
-            def := false
-            item.Featured = &def
-        }
+		// Default featured to false when missing in older records
+		if item.Featured == nil {
+			def := false
+			item.Featured = &def
+		}
 
-        item.FilePath = file
-        newsItems = append(newsItems, &item)
-    }
+		item.FilePath = file
+		newsItems = append(newsItems, &item)
+	}
 
-    return newsItems, nil
+	return newsItems, nil
 }
 
 // DeleteNews deletes a news item by its ID
@@ -372,31 +390,31 @@ func (s *FileStorage) Close() error {
 // PurgeProcessedLocal deletes all JSON files under the local processed/ directory.
 // Destructive; use cautiously.
 func (s *FileStorage) PurgeProcessedLocal(ctx context.Context) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    processedPath := s.basePath
-    if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
-        processedPath = filepath.Join(s.basePath, "processed")
-    }
+	processedPath := s.basePath
+	if !strings.HasSuffix(strings.TrimRight(s.basePath, "/"), "processed") {
+		processedPath = filepath.Join(s.basePath, "processed")
+	}
 
-    return filepath.Walk(processedPath, func(path string, info os.FileInfo, err error) error {
-        if err != nil {
-            return err
-        }
-        if ctx.Err() != nil {
-            return ctx.Err()
-        }
-        if info.IsDir() {
-            return nil
-        }
-        if strings.HasSuffix(info.Name(), ".json") {
-            if remErr := os.Remove(path); remErr != nil {
-                return fmt.Errorf("failed removing %s: %w", path, remErr)
-            }
-        }
-        return nil
-    })
+	return filepath.Walk(processedPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), ".json") {
+			if remErr := os.Remove(path); remErr != nil {
+				return fmt.Errorf("failed removing %s: %w", path, remErr)
+			}
+		}
+		return nil
+	})
 }
 
 type R2Storage struct {
@@ -444,8 +462,8 @@ func (r *R2Storage) SaveNews(ctx context.Context, item *models.NewsItem) error {
 		return fmt.Errorf("failed to marshal news item: %w", err)
 	}
 
-	// Upload to R2 with dated path structure
-	key := fmt.Sprintf("processed/%s/%s.json", time.Now().Format("2006/01/02"), item.ID)
+	// Upload to R2 with dated path structure and epoch prefix for deterministic ordering
+	key := fmt.Sprintf("processed/%s/%d_%s.json", time.Now().Format("2006/01/02"), time.Now().Unix(), item.ID)
 
 	_, err = r.s3Client.PutObject(ctx, &s3.PutObjectInput{ // Use the provided context
 		Bucket:      aws.String(r.bucket),
@@ -533,6 +551,7 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
     }
 
     var collected []types.Object
+    candidatesCap := 1000
 
     // Look back last 7 days to balance freshness with listing cost
     daysToScan := 7
@@ -563,7 +582,7 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
                 Bucket:            aws.String(r.bucket),
                 Prefix:            aws.String(prefix),
                 ContinuationToken: token,
-                MaxKeys:           aws.Int32(int32(pageSize * 3)),
+                MaxKeys:           aws.Int32(500),
             })
             listCancel()
             if err != nil {
@@ -573,6 +592,9 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
             for _, obj := range out.Contents {
                 if strings.HasSuffix(aws.ToString(obj.Key), ".json") {
                     collected = append(collected, obj)
+                    if len(collected) >= candidatesCap {
+                        break
+                    }
                 }
             }
 
@@ -580,15 +602,12 @@ func (r *R2Storage) ListNews(ctx context.Context, page, pageSize int) ([]*models
                 break
             }
             token = out.NextContinuationToken
-
-            // If we've already collected enough for pagination, we can break early
-            if len(collected) >= page*pageSize { // enough for requested page
+            if len(collected) >= candidatesCap {
                 break
             }
         }
 
-        // Early exit if we already have enough for requested page
-        if len(collected) >= page*pageSize {
+        if len(collected) >= candidatesCap {
             break
         }
     }
