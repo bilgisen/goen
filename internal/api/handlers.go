@@ -117,7 +117,7 @@ func (h *Handlers) GetNews(c *fiber.Ctx) error {
 		page = 1
 	}
 
-	pageSize, _ := strconv.Atoi(c.Query("page_size", "10"))
+	pageSize, _ := strconv.Atoi(c.Query("page_size", "20"))
 	switch {
 	case pageSize > 100:
 		pageSize = 100

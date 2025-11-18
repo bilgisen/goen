@@ -16,26 +16,35 @@ import (
 )
 
 // ---------- GeminiClient ve tipler ----------
+
 type GeminiClient struct {
-	client    *resty.Client
-	apiKey    string
-	model     string
-	baseURL   string
-	limiter   *RedisLimiter // optional
-	tpmLimit  int           // tokens per minute limit
+	client   *resty.Client
+	apiKey   string
+	model    string
+	baseURL  string
+	limiter  *RedisLimiter // optional
+	tpmLimit int           // tokens per minute limit
 }
 
 // generationConfig: Gemini API parametreleri
 type generationConfig struct {
-	Temperature     float32 `json:"temperature"`
-	TopP            float32 `json:"topP"`
-	TopK            int32   `json:"topK"`
-	MaxOutputTokens int32   `json:"maxOutputTokens"`
+	Temperature      float32 `json:"temperature"`
+	TopP             float32 `json:"topP"`
+	TopK             int32   `json:"topK"`
+	MaxOutputTokens  int32   `json:"maxOutputTokens"`
+	ResponseMimeType string  `json:"responseMimeType,omitempty"` // JSON Mode için eklendi
+}
+
+// safetySetting: Haber içerikleri için filtre ayarları
+type safetySetting struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
 }
 
 type geminiRequest struct {
 	Contents         []geminiContent   `json:"contents"`
 	GenerationConfig *generationConfig `json:"generationConfig,omitempty"`
+	SafetySettings   []safetySetting   `json:"safetySettings,omitempty"`
 }
 
 type geminiContent struct {
@@ -133,7 +142,7 @@ func (g *GeminiClient) GenerateEnglishNews(ctx context.Context, item models.Feed
 			case <-time.After(time.Duration(attempt) * time.Second):
 			}
 		}
-	}
+    }
 
 	if lastErr != nil {
 		log.Error().Err(lastErr).Str("guid", item.Guid).Msg("Failed to generate English news after all retries")
@@ -175,12 +184,25 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 	url := fmt.Sprintf("%s/%s:generateContent?key=%s", g.baseURL, g.model, g.apiKey)
 	log.Debug().Str("model", g.model).Msg("Sending request to Gemini API")
 
-	// Production-optimized config for low hallucination, stable JSON
+	// Production-optimized config
+	// Temperature: 0.35 -> Haber metni akıcılığı için hafif artırıldı (0.2 çok robottu)
+	// TopP: 0.90 -> Doğal dil çeşitliliği için
+	// ResponseMimeType: application/json -> Gemini'nin native JSON modunu zorlar
 	genConfig := &generationConfig{
-		Temperature:     0.2,
-		TopP:            0.8,
-		TopK:            50,
-		MaxOutputTokens: 4096,
+		Temperature:      0.35,
+		TopP:             0.90,
+		TopK:             40,
+		MaxOutputTokens:  4096,
+		ResponseMimeType: "application/json",
+	}
+
+	// Safety Settings: Haber doğası gereği (savaş, kaza, protesto) bloklanmamalı.
+	// Tüm kategoriler için eşiği "BLOCK_ONLY_HIGH" yapıyoruz.
+	safetySettings := []safetySetting{
+		{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_ONLY_HIGH"},
+		{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_ONLY_HIGH"},
+		{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_ONLY_HIGH"},
+		{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_ONLY_HIGH"},
 	}
 
 	req := geminiRequest{
@@ -188,6 +210,7 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 			Parts: []geminiPart{{Text: prompt}},
 		}},
 		GenerationConfig: genConfig,
+		SafetySettings:   safetySettings,
 	}
 
 	resp, err := g.client.R().
@@ -207,7 +230,7 @@ func (g *GeminiClient) callGeminiAPI(ctx context.Context, prompt string) (string
 
 	var result geminiResponse
 	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		// Try to recover with fallback: sometimes response JSON shape differs; return raw body
+		// Fallback to string body if unmarshal fails (rare)
 		return string(resp.Body()), nil
 	}
 
@@ -228,7 +251,7 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 	// 1) Normalize response
 	clean := normalizeResponse(response)
 
-	// 2) Try direct unmarshal
+	// 2) Try direct unmarshal (Most likely to succeed with JSON Mode enabled)
 	var result struct {
 		SeoTitle      string   `json:"seo_title"`
 		SeoDesc       string   `json:"seo_description"`
@@ -249,17 +272,16 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		return buildNewsItemFromResult(result, item), nil
 	}
 
-	// 3) If direct unmarshal fails, try extracting first {...} JSON object using bracket scanning
+	// 3) If direct unmarshal fails, try extracting first {...} JSON object
 	jsonBlock, err := extractJSONBlock(clean)
 	if err == nil {
-		// try unmarshal extracted block
 		if err2 := json.Unmarshal([]byte(jsonBlock), &result); err2 == nil {
 			if strings.TrimSpace(result.SeoTitle) == "" || strings.TrimSpace(result.ContentMD) == "" {
 				return nil, fmt.Errorf("missing required fields after extracting JSON block")
 			}
 			return buildNewsItemFromResult(result, item), nil
 		}
-		// attempt to "fix" common JSON problems and retry
+		// attempt to "fix" common JSON problems
 		fixed := tryFixCommonJSONIssues(jsonBlock)
 		if fixed != "" {
 			if err3 := json.Unmarshal([]byte(fixed), &result); err3 == nil {
@@ -271,35 +293,30 @@ func parseGeminiResponse(response string, item models.FeedItem) (*models.NewsIte
 		}
 	}
 
-	// 4) Last-resort: attempt to find key-value pairs heuristically (best-effort)
+	// 4) Last-resort: attempt to find key-value pairs heuristically
 	heuristic, herr := heuristicParse(clean)
 	if herr == nil && heuristic != nil {
-		// require content_md and seo_title present
 		if strings.TrimSpace(heuristic.ContentMD) != "" && strings.TrimSpace(heuristic.SeoTitle) != "" {
 			return buildNewsItemFromResult(*heuristic, item), nil
 		}
 	}
 
-	// 5) If everything fails, return original response for debugging
+	// 5) Fail
 	return nil, fmt.Errorf("failed to parse Gemini JSON output after multiple attempts; raw: %.800s", clean)
 }
 
 // normalizeResponse: remove markdown fences, odd prefixes, NBSPs, control chars
 func normalizeResponse(s string) string {
 	out := strings.TrimSpace(s)
-	// remove common markdown code fences
 	out = strings.TrimPrefix(out, "```json")
 	out = strings.TrimPrefix(out, "```")
 	out = strings.TrimSuffix(out, "```")
 	out = strings.TrimSpace(out)
-	// sometimes model outputs "json\n{...}"
 	if strings.HasPrefix(strings.ToLower(out), "json") {
 		out = strings.TrimSpace(out[4:])
 	}
-	// replace non-breaking spaces
 	out = strings.ReplaceAll(out, "\u00A0", " ")
 	out = strings.ReplaceAll(out, "\u200B", "")
-	// remove weird control chars except newline and tab
 	out = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' || r == '\r' {
 			return r
@@ -309,14 +326,13 @@ func normalizeResponse(s string) string {
 		}
 		return r
 	}, out)
-	// collapse repeated spaces
 	for strings.Contains(out, "  ") {
 		out = strings.ReplaceAll(out, "  ", " ")
 	}
 	return strings.TrimSpace(out)
 }
 
-// extractJSONBlock finds the first balanced JSON object in the string using stack-based scan
+// extractJSONBlock finds the first balanced JSON object
 func extractJSONBlock(s string) (string, error) {
 	start := -1
 	depth := 0
@@ -353,37 +369,28 @@ func extractJSONBlock(s string) (string, error) {
 	return "", fmt.Errorf("no balanced json block found")
 }
 
-// tryFixCommonJSONIssues: remove trailing commas, replace single quotes around keys/strings (best-effort)
+// tryFixCommonJSONIssues: remove trailing commas, replace single quotes
 func tryFixCommonJSONIssues(s string) string {
 	fixed := s
-	// remove trailing commas before } or ]
 	reTrailingComma := regexp.MustCompile(`,(\s*[}\]])`)
 	fixed = reTrailingComma.ReplaceAllString(fixed, "$1")
-	// Sometimes model uses single quotes for strings - convert only if appears to be JSON-like (risky but helpful)
-	// Convert single-quoted values to double quotes when safe: '...'
 	reSingleQuotes := regexp.MustCompile(`'([^']*)'`)
 	fixed = reSingleQuotes.ReplaceAllStringFunc(fixed, func(m string) string {
-		// if m contains a double quote, skip to avoid breaking JSON
 		if strings.Contains(m, "\"") {
 			return m
 		}
-		// replace surrounding single quotes with double quotes, escape inner double quotes
 		inner := m[1 : len(m)-1]
 		inner = strings.ReplaceAll(inner, "\"", "\\\"")
 		return `"` + inner + `"`
 	})
-	// Trim unescaped newlines in JSON values (replace with \n)
-	// This is conservative: wrap only if looks like "key": "multi
-	// line..."
 	reUnescapedNewline := regexp.MustCompile(`"([^"]*)"\s*:\s*"([^"]*\n[^"]*)"`)
 	fixed = reUnescapedNewline.ReplaceAllStringFunc(fixed, func(m string) string {
-		// a simpler but safe approach: replace literal newlines with \n
 		return strings.ReplaceAll(m, "\n", `\n`)
 	})
 	return fixed
 }
 
-// heuristicParse: very best-effort extraction if JSON completely failed
+// heuristicParse: very best-effort extraction
 func heuristicParse(s string) (*struct {
 	SeoTitle      string   `json:"seo_title"`
 	SeoDesc       string   `json:"seo_description"`
@@ -395,7 +402,6 @@ func heuristicParse(s string) (*struct {
 	Featured      bool     `json:"featured"`
 }, error) {
 
-	// simple regexes for seo_title and content_md as last resort
 	reSeo := regexp.MustCompile(`"seo_title"\s*:\s*"([^"]+)"`)
 	reContent := regexp.MustCompile(`"content_md"\s*:\s*"([^"]+)"`)
 
@@ -420,7 +426,6 @@ func heuristicParse(s string) (*struct {
 		out.ContentMD = foundContent[1]
 	}
 
-	// If neither found, fail
 	if out.SeoTitle == "" && out.ContentMD == "" {
 		return nil, fmt.Errorf("heuristic parse failed")
 	}
@@ -429,7 +434,6 @@ func heuristicParse(s string) (*struct {
 
 // buildNewsItemFromResult: convert parsed struct to models.NewsItem
 func buildNewsItemFromResult(res interface{}, item models.FeedItem) *models.NewsItem {
-	// Convert via marshal/unmarshal for ease (res type is known earlier)
 	b, _ := json.Marshal(res)
 	var r struct {
 		SeoTitle      string   `json:"seo_title"`
@@ -443,11 +447,9 @@ func buildNewsItemFromResult(res interface{}, item models.FeedItem) *models.News
 	}
 	_ = json.Unmarshal(b, &r)
 
-	// Clean tags: strip trivial country tags
 	tagsToStrip := map[string]bool{
 		"türkiye": true, "turkiye": true, "turkey": true,
 	}
-	// Stop-word filter for overly generic tags
 	stopWords := map[string]bool{
 		"news": true, "update": true, "updates": true,
 		"breaking": true, "latest": true, "general": true,
@@ -467,7 +469,6 @@ func buildNewsItemFromResult(res interface{}, item models.FeedItem) *models.News
 		}
 		finalTags = append(finalTags, tt)
 	}
-	// Limit to at most 3 tags
 	if len(finalTags) > 3 {
 		finalTags = finalTags[:3]
 	}
@@ -475,7 +476,6 @@ func buildNewsItemFromResult(res interface{}, item models.FeedItem) *models.News
 		finalTags = []string{"General"}
 	}
 
-	// Category normalization from feed item
 	category := strings.TrimSpace(item.Category)
 	if strings.EqualFold(category, "Türkiye") || strings.EqualFold(category, "türkiye") {
 		category = "turkiye"
@@ -514,29 +514,34 @@ func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-func escapeJSON(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\t", " ")
-	return s
-}
+// ---------- PERFECT PROMPT & BUILDER ----------
 
-// ---------- PERFECT PROMPT (AŞAMA 2) ----------
 func buildPrompt(item models.FeedItem) string {
-	// Use escaped content when embedding into prompt
-	escaped := escapeJSON(item.ContentTR)
+	// Güvenli JSON escaping: İçeriği JSON string'e çevirip tırnakları temizleyerek
+	// prompt içine güvenli bir şekilde gömüyoruz.
+	contentBytes, _ := json.Marshal(item.ContentTR)
+	escapedContent := string(contentBytes)
+	// json.Marshal string'i "..." içine alır, bunları temizleyelim
+	if len(escapedContent) >= 2 {
+		escapedContent = escapedContent[1 : len(escapedContent)-1]
+	}
+
 	return fmt.Sprintf(`
 You are a professional senior news editor. Your task is to translate and rewrite Turkish news for a global audience in a Reuters-style: neutral, factual, and objective.
+
+**CRITICAL INSTRUCTION:** You must perform a **Translation Integrity Check** before generating the final output. 
+1. If the generated 'content_md' or metadata is in Turkish, you MUST discard it and re-translate it into English immediately.
+2. The final JSON output must contain **ZERO Turkish text** (except for proper nouns like names or cities).
 
 Your job: Take the Turkish source text below and generate a *strictly valid JSON object* following the steps and structure.
 
 ---
 
-### STEP 1 — content_md
+### STEP 1 — CONTENT GENERATION (English Only)
 
 Write a full English news article based on the Turkish source.
 
+- **Translation Check:** Ensure the text is fully translated. Do not output Turkish sentences.
 - Use a neutral, factual Reuters reporting tone.
 - Use flawless English.
 - Always use "Türkiye", never "Turkey".
@@ -548,35 +553,40 @@ Write a full English news article based on the Turkish source.
 
 ---
 
-### STEP 2 — METADATA
+### STEP 2 — METADATA & FEATURED LOGIC
 
-Generate:
+Generate metadata ensuring all fields are in English.
 
-- seo_title: under 60 chars
-- seo_description: 120–160 chars
-- tags: 1–3 topic/sub-category keywords (Title Case)
-- peoples: list clearly notable people only, or []
-- locations: list countries/cities or []
-- organizations: list institutions, companies and brands or []
+- seo_title: under 60 chars (Catchy, English).
+- seo_description: 120–160 chars (Summary, English).
+- tags: 1–3 topic/sub-category keywords (Title Case, English).
+- peoples: list clearly notable people only, or [].
+- locations: list countries/cities or [].
+- organizations: list institutions, companies and brands or [].
 - featured: true/false
 
-Rules:
-* DO NOT add any information not explicitly present in the Turkish source.
-* Do NOT infer roles or backgrounds (e.g., "former president Trump") unless the source explicitly states them.
-* peoples: include only well-known or clearly important public figures mentioned by full name. EXCLUDE generic/private individuals and any anonymised/initial-based mentions such as "Z.D." or "M.K.".
-* organizations: include institutions (e.g. UN), companies (e.g. Alphabet) and brands (e.g. Google). Use common abbreviations for institutions when they exist (e.g. UN instead of United Nations). Do NOT put persons or locations here.
-* tags: must describe what the article is about as high-level topics or sub-categories (e.g. "Climate Change", "Elections", "Monetary Policy", "Technology Regulation"). Do NOT repeat peoples, organizations or locations as tags; do not use person names or place names as tags.
-* NEVER set featured to true by default. Set featured: true only when the article clearly describes one of the following and is significantly important compared to an ordinary daily news item:
-  - a major political event with nationwide or international consequences
-  - a large-scale disaster or accident
-  - a significant economic development affecting markets or many people
-  - or other large-impact items clearly described in the source
+**Detailed Rules:**
+* **Language Check:** Verify 'seo_title', 'seo_description' and 'tags' are strictly in English.
+* **Privacy:** EXCLUDE generic/private individuals and anonymised mentions (e.g., "Z.D."). Only use full names of public figures.
+* **Tags:** Use high-level topics (e.g., "Economy", "Diplomacy", "Artificial Intelligence"). Do not use names/places as tags.
+
+**Featured Logic (Crucial):**
+Set 'featured: true' IF the news falls into one of these **"High Impact / High Interest"** categories:
+1.  **Global/National Consequence:** Major elections, war/conflict updates, significant diplomatic shifts, or nationwide economic policy changes.
+2.  **Breaking/Urgent:** Large-scale disasters (earthquakes, fires), terrorist attacks, or major accidents with high casualties.
+3.  **High Search Volume / Viral Potential:**
+    - Major technology breakthroughs or massive data breaches.
+    - High-profile scandals involving celebrities or top politicians.
+    - Significant sports victories (National team level or Champions League level).
+    - Health emergencies or breakthrough medical news.
+
+*Set 'featured: false' for:* Routine local municipal news, minor traffic accidents, daily weather reports, or low-impact statements from local officials.
 
 ---
 
 ### STEP 3 — FINAL JSON OUTPUT FORMAT
 
-Return ONLY this JSON (no text outside):
+Return ONLY this JSON (no text outside, ensure JSON validity):
 
 {
   "content_md": "...",
@@ -593,5 +603,5 @@ Return ONLY this JSON (no text outside):
 
 ### SOURCE TEXT (Turkish):
 %s
-`, escaped)
+`, escapedContent)
 }
