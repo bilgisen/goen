@@ -22,7 +22,7 @@ redis:
 # AI Configuration
 ai:
   provider: "gemini"  # gemini, openai, etc.
-  model: "gemini-2.5-flash-lite"  # Will be overridden by AI_MODEL environment variable
+  model: "gemini-2.5-flash"  # Will be overridden by AI_MODEL environment variable
   max_retries: 3
   timeout: 60s  # Will be overridden by AI_TIMEOUT environment variable
   temperature: 0.6

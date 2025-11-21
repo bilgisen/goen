@@ -163,7 +163,7 @@ func applyDefaults(cfg *Config) {
 		cfg.MaxConcurrency = 5
 	}
 	if cfg.AIModel == "" {
-		cfg.AIModel = "gemini-pro"
+		cfg.AIModel = "gemini-2.5-flash"
 	}
 	if cfg.AITimeout == 0 {
 		cfg.AITimeout = 60
@@ -190,7 +190,6 @@ func applyDefaults(cfg *Config) {
 		// Set some default news feed URLs if none provided
 		cfg.FeedURLs = []string{
 			"https://www.ekonomim.com/rss",
-			"https://www.ntv.com.tr/spor.rss",
 			"https://www.ntv.com.tr/dunya.rss",
 		}
 	}
