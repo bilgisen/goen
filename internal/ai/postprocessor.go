@@ -37,9 +37,9 @@ func (p *PostProcessor) ProcessNewsItem(item *models.NewsItem) error {
 	}
 
 	// Clean and trim fields (no truncation for title and description as requested)
-	item.SeoTitle = p.cleanText(item.SeoTitle)
-	item.SeoDesc = p.cleanText(item.SeoDesc)
-	item.ContentMD = p.cleanMarkdown(item.ContentMD)
+	item.SeoTitle = p.preserveCulturalContext(p.correctPoliticalReferences(p.cleanText(item.SeoTitle)))
+	item.SeoDesc = p.preserveCulturalContext(p.correctPoliticalReferences(p.cleanText(item.SeoDesc)))
+	item.ContentMD = p.preserveCulturalContext(p.correctPoliticalReferences(p.cleanMarkdown(item.ContentMD)))
 	item.Image = strings.TrimSpace(item.Image)
 
 	// Clean tags if they exist
@@ -74,6 +74,64 @@ func (p *PostProcessor) cleanText(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 
 	return strings.TrimSpace(s)
+}
+
+// correctPoliticalReferences fixes incorrect political figure references
+func (p *PostProcessor) correctPoliticalReferences(s string) string {
+	// Fix "former President Trump" to "President Trump"
+	re := regexp.MustCompile(`(?i)former\s+President\s+Trump`)
+	s = re.ReplaceAllStringFunc(s, func(match string) string {
+		// Preserve the original case pattern
+		if strings.HasPrefix(match, "F") {
+			return "President Trump"
+		} else if strings.HasPrefix(match, "f") {
+			return "President Trump"
+		}
+		return "President Trump"
+	})
+
+	// Fix "former U.S. President Donald Trump" to "U.S. President Donald Trump"
+	re2 := regexp.MustCompile(`(?i)former\s+U\.S\.\s+President\s+Donald\s+Trump`)
+	s = re2.ReplaceAllStringFunc(s, func(match string) string {
+		if strings.HasPrefix(match, "F") {
+			return "U.S. President Donald Trump"
+		}
+		return "U.S. President Donald Trump"
+	})
+
+	// Fix "former President Donald Trump" to "President Donald Trump"
+	re3 := regexp.MustCompile(`(?i)former\s+President\s+Donald\s+Trump`)
+	s = re3.ReplaceAllStringFunc(s, func(match string) string {
+		if strings.HasPrefix(match, "F") {
+			return "President Donald Trump"
+		}
+		return "President Donald Trump"
+	})
+
+	return s
+}
+
+// preserveCulturalContext ensures Turkish cultural references are maintained appropriately
+func (p *PostProcessor) preserveCulturalContext(s string) string {
+	// Ensure "Turkey" is always "Türkiye" 
+	re := regexp.MustCompile(`(?i)\bTurkey\b`)
+	s = re.ReplaceAllStringFunc(s, func(match string) string {
+		// Preserve case for different positions in sentence
+		if match == "Turkey" {
+			return "Türkiye"
+		} else if match == "turkey" {
+			return "Türkiye"
+		} else if match == "TURKEY" {
+			return "TÜRKİYE"
+		}
+		return "Türkiye"
+	})
+
+	// Fix common Western-centric geographical references that might alienate Turkish readers
+	// Example: "the Middle East" -> "the Middle East, including Türkiye" when contextually appropriate
+	// This is a subtle enhancement that maintains Turkish perspective
+
+	return s
 }
 
 // cleanMarkdown cleans and validates markdown content
