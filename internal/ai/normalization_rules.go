@@ -30,6 +30,7 @@ var organizationVariations = map[string]string{
 	// Republican People's Party variations
 	"republican people's party":    "CHP",
 	"cumhuriyet halk partisi":      "CHP",
+	"cumhuriyet halk partisi (chp)": "CHP",
 	"chp":                          "CHP",
 	"Republican People's Party (CHP)":                          "CHP",
 
@@ -56,6 +57,8 @@ var organizationVariations = map[string]string{
 
 	// Turkey Labour Party variations
 	"türkiye işçİ partisi": "TİP",
+	"türkiye işçi partisi": "TİP",
+	"turkey işci partisi": "TİP",
 	"tip": "TİP",
 
 	// Kamuyu Aydınlatma Platformu variations
@@ -107,7 +110,22 @@ var organizationVariations = map[string]string{
 	"supreme election council": "YSK",
 	"supreme election council (ysk)": "YSK",
 	"yuksek secim kurulu": "YSK",
+	"yüksek seçim kurulu": "YSK",
 	"ysk": "YSK",
+
+	// European Court of Human Rights variations
+	"european court of human rights": "ECHR",
+	"echr": "ECHR",
+
+	// High Council of Judges and Prosecutors variations
+	"high council of judges and prosecutors": "HSYK",
+	"high council of judges and prosecutors (hsk)": "HSYK",
+	"hsyk": "HSYK",
+
+	// Financial Crimes Investigation Board variations
+	"financial crimes investigation board": "MASAK",
+	"financial crimes investigation board (masak)": "MASAK",
+	"masak": "MASAK",
 
 	// Add more organization normalization rules here as needed
 }
