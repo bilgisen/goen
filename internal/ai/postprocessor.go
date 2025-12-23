@@ -46,21 +46,30 @@ func (p *PostProcessor) ProcessNewsItem(item *models.NewsItem) error {
 	if len(item.Tags) > 0 {
 		var cleanTags []string
 		tagMap := make(map[string]bool) // To ensure uniqueness
-		
+
 		for _, tag := range item.Tags {
 			tag = strings.ToLower(p.cleanText(tag))
+			// Normalize organization names in tags
+			normalizedTag := NormalizeOrganization(tag)
 			// Skip empty tags or those in blocked categories
-			if tag != "" && !ShouldRemoveTag(tag) && !tagMap[tag] {
-				tagMap[tag] = true
-				cleanTags = append(cleanTags, tag)
+			if normalizedTag != "" && !ShouldRemoveTag(normalizedTag) && !tagMap[normalizedTag] {
+				tagMap[normalizedTag] = true
+				cleanTags = append(cleanTags, normalizedTag)
 			}
 		}
 		item.Tags = cleanTags
 	}
 
-	// Normalize organization names in the content
-	if item.ContentMD != "" {
-		item.ContentMD = p.normalizeContentOrganizations(item.ContentMD)
+	// Normalize organization names in the Organizations field
+	if len(item.Organizations) > 0 {
+		var normalizedOrgs []string
+		for _, org := range item.Organizations {
+			normalizedOrg := NormalizeOrganization(org)
+			if normalizedOrg != "" {
+				normalizedOrgs = append(normalizedOrgs, normalizedOrg)
+			}
+		}
+		item.Organizations = normalizedOrgs
 	}
 
 	// Ensure required fields have values
