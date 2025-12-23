@@ -42,11 +42,25 @@ func (p *PostProcessor) ProcessNewsItem(item *models.NewsItem) error {
 	item.ContentMD = p.preserveCulturalContext(p.correctPoliticalReferences(p.cleanMarkdown(item.ContentMD)))
 	item.Image = strings.TrimSpace(item.Image)
 
-	// Clean tags if they exist
+	// Clean and normalize tags if they exist
 	if len(item.Tags) > 0 {
-		for i, tag := range item.Tags {
-			item.Tags[i] = strings.ToLower(p.cleanText(tag))
+		var cleanTags []string
+		tagMap := make(map[string]bool) // To ensure uniqueness
+		
+		for _, tag := range item.Tags {
+			tag = strings.ToLower(p.cleanText(tag))
+			// Skip empty tags or those in blocked categories
+			if tag != "" && !ShouldRemoveTag(tag) && !tagMap[tag] {
+				tagMap[tag] = true
+				cleanTags = append(cleanTags, tag)
+			}
 		}
+		item.Tags = cleanTags
+	}
+
+	// Normalize organization names in the content
+	if item.ContentMD != "" {
+		item.ContentMD = p.normalizeContentOrganizations(item.ContentMD)
 	}
 
 	// Ensure required fields have values
@@ -132,6 +146,18 @@ func (p *PostProcessor) preserveCulturalContext(s string) string {
 	// This is a subtle enhancement that maintains Turkish perspective
 
 	return s
+}
+
+// normalizeContentOrganizations normalizes organization names in the content
+func (p *PostProcessor) normalizeContentOrganizations(content string) string {
+	// This is a simple implementation that replaces organization names in the content
+	// For a more robust solution, consider using NLP to identify organization mentions
+	for variation, normalized := range organizationVariations {
+		// Create a case-insensitive regex pattern
+		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(variation) + `\b`)
+		content = re.ReplaceAllString(content, normalized)
+	}
+	return content
 }
 
 // cleanMarkdown cleans and validates markdown content
